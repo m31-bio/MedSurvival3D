@@ -538,10 +538,11 @@ def run_fold(cfg, exp_dir, pred_dir, fold, device, metrics_rows, pooled_val_risk
 
         out_dir = pred_dir / f"fold_{fold}" / split
         write_predictions(outputs, out_dir, bin_columns, landmark_map, cutoff, survival_loss_name)
-        plot_km_high_low(outputs, cutoff, out_dir / "km_high_low.png")
-        lmk_rows = landmark_rows(outputs, landmark_map, cutoff)
-        write_landmark_risks(lmk_rows, out_dir / "landmark_risks.csv")
-        plot_landmark_bars(lmk_rows, out_dir / "landmark_risk_bars.png")
+        if survival_loss_name != "cox":
+            plot_km_high_low(outputs, cutoff, out_dir / "km_high_low.png")
+            lmk_rows = landmark_rows(outputs, landmark_map, cutoff)
+            write_landmark_risks(lmk_rows, out_dir / "landmark_risks.csv")
+            plot_landmark_bars(lmk_rows, out_dir / "landmark_risk_bars.png")
 
         metrics = compute_metrics(outputs, survival_loss_name)
         metrics_rows.append(
@@ -694,10 +695,11 @@ def _inference_impl(cfg):
             pooled_cutoff,
             survival_loss_name,
         )
-        plot_km_high_low(ensemble, pooled_cutoff, out_dir / "km_high_low.png")
-        lmk_rows = landmark_rows(ensemble, fold_results[0]["landmark_map"], pooled_cutoff)
-        write_landmark_risks(lmk_rows, out_dir / "landmark_risks.csv")
-        plot_landmark_bars(lmk_rows, out_dir / "landmark_risk_bars.png")
+        if survival_loss_name != "cox":
+            plot_km_high_low(ensemble, pooled_cutoff, out_dir / "km_high_low.png")
+            lmk_rows = landmark_rows(ensemble, fold_results[0]["landmark_map"], pooled_cutoff)
+            write_landmark_risks(lmk_rows, out_dir / "landmark_risks.csv")
+            plot_landmark_bars(lmk_rows, out_dir / "landmark_risk_bars.png")
         metrics = compute_metrics(ensemble, survival_loss_name)
         metrics_rows.append(
             {
