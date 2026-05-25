@@ -1,0 +1,16 @@
+# @package _global_
+model:
+  _target_: models.resenc.ResEncoder_Survival
+  pretrained: True
+  chpt_path: null
+  num_time_bins: 5
+  survival_cut_points_years: [1.0, 2.0, 3.0, 5.0]
+  survival_landmark_years: [1.0, 2.0, 3.0, 5.0]
+  survival_head_hidden_dim: 64
+  survival_head_dropout: 0.0
+  survival_head_norm: batchnorm
+  cox_loss_lambda: 0.0
+  finetune_method: full
+
+trainer:
+  strategy: 'ddp_find_unused_parameters_true'

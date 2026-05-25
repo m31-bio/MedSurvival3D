@@ -1,0 +1,66 @@
+# @package _global_
+data:
+  module:
+    _target_: datasets.survival.SurvivalDataModule
+    name: Survival
+    data_root_dir: ???
+    batch_size: 2
+    label_file: survival_labels.json
+    image_dir: nnUNetResEncUNetLPlans_3d_fullres
+    split_file: splits_final.json
+    train_transforms:
+      _target_: augmentation.policies.batchgenerators.get_training_transforms
+      patch_size: ${data.patch_size}
+      rotation_for_DA: 0.523599
+      mirror_axes: [0,1,2]
+      do_dummy_2d_data_aug: False
+    test_transforms: null
+  cv:
+    k: 5
+
+  num_classes: 2
+  patch_size: [160, 192, 192]
+
+fixed_survival_time_bins:
+  cut_points_years: [1.0, 2.0, 3.0, 5.0]
+  labels: [0-1y, 1-2y, 2-3y, 3-5y, 5y+]
+  num_time_bins: 5
+
+model:
+  task: 'Survival'
+  subtask: null
+  cifar_size: False
+  input_channels: 1
+  input_dim: 3
+  input_shape: ${data.patch_size}
+  optimizer: AdamW
+  lr: 0.0001
+  warmstart: 20
+  weight_decay: 1e-2
+  num_time_bins: ${fixed_survival_time_bins.num_time_bins}
+  survival_cut_points_years: ${fixed_survival_time_bins.cut_points_years}
+  survival_landmark_years: ${fixed_survival_time_bins.cut_points_years}
+  survival_smoothing_alpha: 0.05
+  cox_loss_lambda: 0.0
+  result_plot: null
+  save_preds: True
+
+trainer:
+  enable_checkpointing: True
+  callbacks:
+    checkpoint:
+      monitor: "Val/C-index"
+      mode: "max"
+      filename: "{epoch}-{Val/C-index:.4f}"
+    early_stopping:
+      _target_: lightning.pytorch.callbacks.EarlyStopping
+      monitor: "Val/C-index"
+      mode: "max"
+      patience: 50
+      min_delta: 0.0
+  logger:
+    project: Survival
+  accumulate_grad_batches: 48
+  max_epochs: 200
+
+metrics: []

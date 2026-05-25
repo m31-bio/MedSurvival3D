@@ -1,0 +1,19 @@
+hydra:
+  output_subdir: null
+  job:
+    chdir: False
+  run:
+    dir: .
+
+override hydra/hydra_logging: disable
+override hydra/job_logging: disable
+
+exp_dir: ???
+splits_json: ???
+pred_dir: ???
+folds: [0, 1, 2, 3, 4]
+checkpoint_glob: "*.ckpt"
+landmark_years: [1, 2, 5]
+time_bin_labels: ["0-1y", "1-2y", "2-3y", "3-5y", "5y+"]
+time_bin_upper_bounds_years: [1, 2, 3, 5, null]
+device: auto

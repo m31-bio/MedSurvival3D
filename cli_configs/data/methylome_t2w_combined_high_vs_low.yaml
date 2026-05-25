@@ -1,0 +1,87 @@
+# @package _global_
+data:
+  module:
+    _target_: datasets.coca_t1c_combined_b2nd.COCACombinedB2NDDataModule
+    name: Methylome_T2w_High_v_Low_v2
+    data_root_dir: /home/jma/Documents/projects/safwat/coca_classifier_codebase/dataset/nnssl_preprocessed/Dataset020_UHN_Mayo_T2w_mask
+    batch_size: 12
+    train_transforms:
+      _target_: augmentation.policies.batchgenerators.get_training_transforms
+      patch_size: ${data.patch_size}
+      rotation_for_DA: 0.523599
+      mirror_axes: [0,1,2]
+      do_dummy_2d_data_aug: false
+    test_transforms:
+      _target_: augmentation.policies.batchgenerators.get_test_transforms
+      patch_size: ${data.patch_size}
+      do_dummy_2d_data_aug: false
+    fold: 0
+    data_subdir: nnsslPlans_onemmiso/Dataset020_UHN_Mayo_T2w_mask/Dataset020_UHN_Mayo_T2w_mask
+    label_file: /home/jma/Documents/projects/safwat/coca_classifier_codebase/dataset/nnssl_preprocessed/Dataset020_UHN_Mayo_T2w_mask/survival_labels.json
+    split_file: /home/jma/Documents/projects/safwat/coca_classifier_codebase/dataset/nnssl_preprocessed/Dataset020_UHN_Mayo_T2w_mask/splits.json
+    image_suffix: .b2nd
+    mask_suffix: __anat.b2nd
+    session_id: ses-DEFAULT
+    target_shape: ${data.patch_size}
+    allow_missing_mask: false
+  cv:
+    k: 5
+
+  num_classes: 2
+  patch_size: [64, 64, 64]
+
+fixed_survival_time_bins:
+  cut_points_years: [1.0, 2.0, 3.0, 5.0]
+  labels: [0-1y, 1-2y, 2-3y, 3-5y, 5y+]
+  num_time_bins: 5
+
+model:
+  task: Survival
+  subtask: null
+  cifar_size: false
+  input_channels: 2
+  input_dim: 3
+  input_shape: ${data.patch_size}
+  optimizer: AdamW
+  lr: 0.000005
+  encoder_lr: 0.000005
+  head_lr: 0.000005
+  scheduler: CosineAnneal
+  T_max: ${trainer.max_epochs}
+  warmstart: 0
+  warmstart2: 0
+  weight_decay: 5e-2
+  finetune_method: full_sawtooth
+  resnet_dropout: 0.3
+  num_time_bins: ${fixed_survival_time_bins.num_time_bins}
+  survival_head_hidden_dim: 64
+  survival_head_dropout: 0.5
+  survival_head_norm: batchnorm
+  survival_cut_points_years: ${fixed_survival_time_bins.cut_points_years}
+  survival_landmark_years: ${fixed_survival_time_bins.cut_points_years}
+  survival_smoothing_alpha: 0.05
+  cox_loss_lambda: 0.0
+  save_preds: true
+  result_plot: null
+
+trainer:
+  logger:
+    project: nnSSL_MethylomeRisk_Survival
+    name: T2w_Survival_lr5e6_resDo0.3_wd0.5
+  accumulate_grad_batches: 4
+  max_epochs: 200
+  sync_batchnorm: true
+  callbacks:
+    checkpoint:
+      filename: best-cindex-epoch{epoch}-Val_loss={Val/loss:.2f}-Val_C-index={Val/C-index:.4f}
+      mode: max
+      monitor: Val/C-index
+      save_top_k: 3
+    early_stopping:
+      _target_: lightning.pytorch.callbacks.EarlyStopping
+      monitor: Val/C-index
+      mode: max
+      patience: 50
+      min_delta: 0.002
+
+metrics: []
