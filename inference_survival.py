@@ -191,6 +191,12 @@ def _tensor_to_numpy(tensor):
     return tensor.detach().cpu().float().numpy()
 
 
+def _resolve_survival_loss_name(training_cfg):
+    """Read survival_loss.name from a checkpoint's training config, defaulting to 'nll'."""
+    cfg = training_cfg.model.get("survival_loss", {"name": "nll"})
+    return str(cfg.get("name", "nll")).lower()
+
+
 def run_split_inference(model, dataloader, dataset, device, split, fold):
     outputs = {
         "logits": [],
@@ -508,8 +514,7 @@ def run_fold(cfg, exp_dir, pred_dir, fold, device, metrics_rows, pooled_val_risk
     datamodule.setup("predict")
 
     num_bins = int(training_cfg.model.num_time_bins)
-    survival_loss_cfg = training_cfg.model.get("survival_loss", {"name": "nll"})
-    survival_loss_name = str(survival_loss_cfg.get("name", "nll")).lower()
+    survival_loss_name = _resolve_survival_loss_name(training_cfg)
     bin_columns = _bin_columns(cfg.time_bin_labels, num_bins)
     landmark_map = _landmark_indices(
         cfg.landmark_years,
@@ -598,7 +603,7 @@ def make_ensemble_outputs(fold_results, survival_loss_name):
             axis=0,
         ).mean(axis=0)
         survival = (1.0 - np.cumsum(pmf, axis=1)).clip(0.0, 1.0)
-        survival_time = survival.sum(axis=1)
+        survival_time = _tensor_to_numpy(survival_to_time(torch.as_tensor(survival))).reshape(-1)
         return {
             "patient_id": base["patient_id"],
             "split": "test",
@@ -679,11 +684,7 @@ def _inference_impl(cfg):
         cutoff_path.parent.mkdir(parents=True, exist_ok=True)
         cutoff_path.write_text(json.dumps({"pooled_oof_cutoff": pooled_cutoff}, indent=2))
 
-        survival_loss_name = str(
-            fold_results[0]["training_cfg"].model.get(
-                "survival_loss", {"name": "nll"}
-            ).get("name", "nll")
-        ).lower()
+        survival_loss_name = _resolve_survival_loss_name(fold_results[0]["training_cfg"])
 
         ensemble = make_ensemble_outputs(fold_results, survival_loss_name)
         out_dir = pred_dir / "ensemble" / "test"
