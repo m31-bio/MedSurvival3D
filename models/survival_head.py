@@ -7,8 +7,15 @@ import torch.nn.functional as F
 from survival_utils import hazard_to_survival, logits_to_hazard, survival_to_time
 
 
+_VALID_LOSSES = ("nll", "cox", "deephit")
+
+
 class PredictionHead(nn.Module):
-    """MLP prediction head for discrete-time survival prediction."""
+    """MLP prediction head for discrete-time survival prediction.
+
+    Emits a stable output dict regardless of which loss is active; the
+    ``survival`` field is computed in the loss-appropriate way.
+    """
 
     def __init__(
         self,
@@ -19,6 +26,7 @@ class PredictionHead(nn.Module):
         hidden_dim: int = 64,
         dropout: float = 0.0,
         norm: str = "batchnorm",
+        survival_loss_name: str = "nll",
     ):
         super().__init__()
 
@@ -28,6 +36,11 @@ class PredictionHead(nn.Module):
             raise ValueError("hidden_dim must be >= 2 for the survival head.")
         if not 0.0 <= dropout <= 1.0:
             raise ValueError("dropout must be between 0.0 and 1.0.")
+        if survival_loss_name not in _VALID_LOSSES:
+            raise ValueError(
+                f"survival_loss_name must be one of {_VALID_LOSSES}, "
+                f"got {survival_loss_name!r}."
+            )
 
         self.input_dim = input_dim
         self.task = task
@@ -36,6 +49,7 @@ class PredictionHead(nn.Module):
         self.hidden_dim = hidden_dim
         self.dropout_rate = dropout
         self.norm = norm.lower()
+        self.survival_loss_name = survival_loss_name
 
         hidden_dim2 = hidden_dim // 2
 
@@ -45,7 +59,12 @@ class PredictionHead(nn.Module):
         self.fc2 = nn.Linear(hidden_dim, hidden_dim2)
         self.norm2 = self._make_norm(hidden_dim2)
         self.dropout2 = nn.Dropout(dropout)
-        self.fc3 = nn.Linear(hidden_dim2, num_time_bins)
+
+        # Three parallel terminal projections. Only one receives gradient
+        # under any given training run; the other two are along for the ride.
+        self.fc_hazard = nn.Linear(hidden_dim2, num_time_bins)
+        self.fc_pmf = nn.Linear(hidden_dim2, num_time_bins)
+        self.fc_risk = nn.Linear(hidden_dim2, 1)
 
     def _make_norm(self, dim: int) -> nn.Module:
         if self.norm in {"batchnorm", "batch_norm", "batch"}:
@@ -62,6 +81,16 @@ class PredictionHead(nn.Module):
         else:
             x = F.relu(norm(x))
         return dropout(x)
+
+    def _survival_for_active_loss(
+        self,
+        hazard: torch.Tensor,
+        pmf: torch.Tensor,
+    ) -> torch.Tensor:
+        if self.survival_loss_name == "deephit":
+            return (1.0 - torch.cumsum(pmf, dim=1)).clamp(min=0.0, max=1.0)
+        # nll and cox both fall back to cumprod(1-hazard).
+        return hazard_to_survival(hazard)
 
     def forward(
         self,
@@ -82,13 +111,19 @@ class PredictionHead(nn.Module):
         x = self._activate_block(self.fc1(features), self.norm1, self.dropout1)
         x = self._activate_block(self.fc2(x), self.norm2, self.dropout2)
 
-        logits = self.fc3(x)
-        hazard = logits_to_hazard(logits)
-        survival = hazard_to_survival(hazard)
+        hazard_logits = self.fc_hazard(x)
+        pmf_logits = self.fc_pmf(x)
+        risk = self.fc_risk(x).squeeze(-1)
+
+        hazard = logits_to_hazard(hazard_logits)
+        pmf = F.softmax(pmf_logits, dim=1)
+        survival = self._survival_for_active_loss(hazard, pmf)
 
         return {
-            "logits": logits,
+            "logits": hazard_logits,
             "hazard": hazard,
+            "pmf": pmf,
+            "risk": risk,
             "survival": survival,
             "survival_time": survival_to_time(survival),
         }
@@ -103,6 +138,7 @@ class PredictionHead(nn.Module):
             "hidden_dim": self.hidden_dim,
             "dropout": self.dropout_rate,
             "norm": self.norm,
+            "survival_loss_name": self.survival_loss_name,
         }
 
 
@@ -116,6 +152,7 @@ class SurvivalHead(PredictionHead):
         hidden_dim: int = 64,
         dropout: float = 0.0,
         norm: str = "batchnorm",
+        survival_loss_name: str = "nll",
     ):
         super().__init__(
             input_dim=input_dim,
@@ -125,4 +162,5 @@ class SurvivalHead(PredictionHead):
             hidden_dim=hidden_dim,
             dropout=dropout,
             norm=norm,
+            survival_loss_name=survival_loss_name,
         )
