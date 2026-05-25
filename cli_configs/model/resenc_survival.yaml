@@ -9,7 +9,6 @@ model:
   survival_head_hidden_dim: 64
   survival_head_dropout: 0.0
   survival_head_norm: batchnorm
-  cox_loss_lambda: 0.0
   finetune_method: full
 
 trainer:

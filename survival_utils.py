@@ -387,6 +387,10 @@ class DeepHitLoss(nn.Module):
         - ``event``: ``[B]`` tensor in {0, 1}; 1 if the event was observed.
 
     Output: scalar = ``alpha * LL + beta * Ranking + gamma * Calibration``.
+
+    Note: ``gamma`` multiplies the calibration term, which sums across the
+    batch (matching the TensorFlow reference). Its effective scale therefore
+    grows with batch size — re-tune ``gamma`` if you change batch size.
     """
 
     _EPSILON = 1e-7
@@ -514,6 +518,11 @@ def build_survival_criterion(cfg, num_time_bins: int):
     if cfg is None:
         cfg = {"name": "nll"}
     # OmegaConf nodes behave dict-like enough for our purposes.
+    if not hasattr(cfg, "get") or not hasattr(cfg, "__contains__"):
+        raise ValueError(
+            "survival_loss must be a mapping with a 'name' key (e.g. "
+            "`survival_loss: {name: deephit}`); got " + repr(cfg) + "."
+        )
     if "name" not in cfg:
         raise ValueError(
             "survival_loss block must specify 'name' (one of: nll, cox, deephit)."

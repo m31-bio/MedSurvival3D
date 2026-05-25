@@ -60,7 +60,12 @@ model:
   survival_cut_points_years: ${fixed_survival_time_bins.cut_points_years}
   survival_landmark_years: ${fixed_survival_time_bins.cut_points_years}
   survival_smoothing_alpha: 0.05
-  cox_loss_lambda: 0.0
+  survival_loss:
+    name: deephit
+    alpha: 1.0
+    beta: 0.5
+    gamma: 0.0
+    sigma: 0.1
   save_preds: true
   result_plot: null
 

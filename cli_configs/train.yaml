@@ -31,7 +31,6 @@ model:
   mixup: False
   mixup_alpha: 0.2
   weight_decay: 5e-4
-  cox_loss_lambda: 0.0
   undecay_norm: False
   label_smoothing: 0.0
   stochastic_depth: False

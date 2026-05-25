@@ -41,7 +41,6 @@ model:
   survival_cut_points_years: ${fixed_survival_time_bins.cut_points_years}
   survival_landmark_years: ${fixed_survival_time_bins.cut_points_years}
   survival_smoothing_alpha: 0.05
-  cox_loss_lambda: 0.0
   result_plot: null
   save_preds: True
 

@@ -359,7 +359,8 @@ def write_predictions(outputs, out_dir, bin_columns, landmark_map, cutoff, survi
         write_matrix_csv(out_dir / "hazards.csv", outputs["patient_id"], outputs["hazards"], bin_columns)
         write_matrix_csv(out_dir / "survival_curves.csv", outputs["patient_id"], outputs["survival"], bin_columns)
     elif survival_loss_name == "deephit":
-        write_matrix_csv(out_dir / "logits.csv", outputs["patient_id"], outputs["logits"], bin_columns)
+        # Note: hazard logits (fc_hazard) are not trained under deephit, so we
+        # do not persist them. The trained projection is fc_pmf → pmf.csv.
         write_matrix_csv(out_dir / "pmf.csv", outputs["patient_id"], outputs["pmf"], bin_columns)
         write_matrix_csv(out_dir / "survival_curves.csv", outputs["patient_id"], outputs["survival"], bin_columns)
     elif survival_loss_name == "cox":
@@ -543,8 +544,8 @@ def run_fold(cfg, exp_dir, pred_dir, fold, device, metrics_rows, pooled_val_risk
 
         out_dir = pred_dir / f"fold_{fold}" / split
         write_predictions(outputs, out_dir, bin_columns, landmark_map, cutoff, survival_loss_name)
+        plot_km_high_low(outputs, cutoff, out_dir / "km_high_low.png")
         if survival_loss_name != "cox":
-            plot_km_high_low(outputs, cutoff, out_dir / "km_high_low.png")
             lmk_rows = landmark_rows(outputs, landmark_map, cutoff)
             write_landmark_risks(lmk_rows, out_dir / "landmark_risks.csv")
             plot_landmark_bars(lmk_rows, out_dir / "landmark_risk_bars.png")
@@ -696,8 +697,8 @@ def _inference_impl(cfg):
             pooled_cutoff,
             survival_loss_name,
         )
+        plot_km_high_low(ensemble, pooled_cutoff, out_dir / "km_high_low.png")
         if survival_loss_name != "cox":
-            plot_km_high_low(ensemble, pooled_cutoff, out_dir / "km_high_low.png")
             lmk_rows = landmark_rows(ensemble, fold_results[0]["landmark_map"], pooled_cutoff)
             write_landmark_risks(lmk_rows, out_dir / "landmark_risks.csv")
             plot_landmark_bars(lmk_rows, out_dir / "landmark_risk_bars.png")
