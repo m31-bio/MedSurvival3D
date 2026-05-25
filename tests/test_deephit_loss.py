@@ -56,8 +56,21 @@ def test_zero_loss_on_perfect_predictions():
     assert loss_fn(pmf, time_bin, event).item() < 1e-3
 
 
+def test_calibration_nonzero_gamma_changes_loss():
+    torch.manual_seed(2)
+    bins = 5
+    pmf = torch.nn.functional.softmax(torch.randn(8, bins), dim=1)
+    time_bin = torch.tensor([0, 1, 2, 3, 4, 0, 2, 4], dtype=torch.long)
+    event = torch.tensor([1, 0, 1, 1, 0, 1, 0, 1], dtype=torch.float32)
+    no_cal = DeepHitLoss(num_time_bins=bins, alpha=1.0, beta=0.0, gamma=0.0, sigma=0.1)(pmf, time_bin, event)
+    with_cal = DeepHitLoss(num_time_bins=bins, alpha=1.0, beta=0.0, gamma=0.5, sigma=0.1)(pmf, time_bin, event)
+    assert with_cal != no_cal, (with_cal.item(), no_cal.item())
+    assert torch.isfinite(with_cal)
+
+
 if __name__ == "__main__":
     test_log_likelihood_collapses_to_nll_when_only_alpha()
     test_finite_and_nonnegative_with_mixed_censoring()
     test_zero_loss_on_perfect_predictions()
+    test_calibration_nonzero_gamma_changes_loss()
     print("OK")

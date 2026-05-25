@@ -447,9 +447,9 @@ class DeepHitLoss(nn.Module):
         if event.sum() == 0:
             return pmf.sum() * 0.0
 
-        cif_at_t = (pmf.unsqueeze(1) * mask2.unsqueeze(0)).sum(dim=2)
-        diag = torch.diagonal(cif_at_t)
-        diff = diag.view(-1, 1) - cif_at_t
+        surv_at_t = (pmf.unsqueeze(1) * mask2.unsqueeze(0)).sum(dim=2)
+        diag = torch.diagonal(surv_at_t)
+        diff = diag.view(-1, 1) - surv_at_t
 
         t_i = time_bin.view(-1, 1).float()
         t_j = time_bin.view(1, -1).float()
@@ -466,8 +466,16 @@ class DeepHitLoss(nn.Module):
         mask2: torch.Tensor,
         event: torch.Tensor,
     ) -> torch.Tensor:
-        per_subject = (pmf * mask2).sum(dim=1) - event
-        return (per_subject ** 2).mean()
+        """DeepHit's calibration term (Lee et al. reference impl, single-event).
+
+        Matches class_DeepHit.py loss_Calibration: r[t] = Σ_i pmf[i, t] * mask2[i, t]
+        (sum over batch), then per-sample term = mean_t((r[t] - event[i])^2),
+        summed across the batch.
+        """
+        r = (pmf * mask2).sum(dim=0)                       # [K], summed over batch
+        diff = r.unsqueeze(0) - event.unsqueeze(1)          # [B, K]
+        per_subject = diff.pow(2).mean(dim=1)               # [B]
+        return per_subject.sum()
 
     def forward(
         self,
@@ -481,8 +489,6 @@ class DeepHitLoss(nn.Module):
         time_bin = time_bin.clamp(0, self.num_time_bins - 1)
 
         mask1, mask2 = self._masks(time_bin)
-        mask1 = mask1.to(pmf.device)
-        mask2 = mask2.to(pmf.device)
 
         ll = self._loss_log_likelihood(pmf, mask1, mask2, event)
         rank = self._loss_ranking(pmf, time_bin, mask2, event)
