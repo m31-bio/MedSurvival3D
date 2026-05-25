@@ -192,7 +192,14 @@ def _tensor_to_numpy(tensor):
 
 
 def run_split_inference(model, dataloader, dataset, device, split, fold):
-    outputs = {"logits": [], "hazard": [], "survival": [], "survival_time": []}
+    outputs = {
+        "logits": [],
+        "hazard": [],
+        "pmf": [],
+        "survival": [],
+        "survival_time": [],
+        "risk": [],
+    }
     time_bins = []
     times = []
     events = []
@@ -214,9 +221,12 @@ def run_split_inference(model, dataloader, dataset, device, split, fold):
 
     logits = np.concatenate(outputs["logits"], axis=0)
     hazard = np.concatenate(outputs["hazard"], axis=0)
+    pmf = np.concatenate(outputs["pmf"], axis=0)
     survival = np.concatenate(outputs["survival"], axis=0)
     survival_time = np.concatenate(outputs["survival_time"], axis=0).reshape(-1)
+    risk_per_sample = np.concatenate(outputs["risk"], axis=0).reshape(-1)
     patient_ids = list(dataset.img_files[:seen])
+
     return {
         "patient_id": patient_ids,
         "split": split,
@@ -226,8 +236,11 @@ def run_split_inference(model, dataloader, dataset, device, split, fold):
         "event": np.concatenate(events).astype(int),
         "logits": logits,
         "hazards": hazard,
+        "pmf": pmf,
         "survival": survival,
         "predicted_survival_time": survival_time,
+        # Cox-mode "risk" is the head scalar; NLL/DeepHit fall back to -∑survival.
+        "risk_scalar": risk_per_sample,
         "risk": -survival.sum(axis=1),
     }
 
@@ -292,7 +305,7 @@ def write_matrix_csv(path, patient_ids, matrix, columns):
             writer.writerow([patient_id] + [float(value) for value in row])
 
 
-def write_predictions(outputs, out_dir, bin_columns, landmark_map, cutoff):
+def write_predictions(outputs, out_dir, bin_columns, landmark_map, cutoff, survival_loss_name):
     out_dir.mkdir(parents=True, exist_ok=True)
     risk_groups = np.where(outputs["risk"] >= cutoff, "high", "low")
     header = [
@@ -307,7 +320,13 @@ def write_predictions(outputs, out_dir, bin_columns, landmark_map, cutoff):
         "risk_group",
     ]
     years = sorted(landmark_map)
-    header.extend([f"pred_risk_{int(year) if year.is_integer() else year:g}y" for year in years])
+
+    has_curve = survival_loss_name in ("nll", "deephit")
+    if has_curve:
+        header.extend([
+            f"pred_risk_{int(year) if year.is_integer() else year:g}y" for year in years
+        ])
+
     with (out_dir / "predictions.csv").open("w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(header)
@@ -319,34 +338,46 @@ def write_predictions(outputs, out_dir, bin_columns, landmark_map, cutoff):
                 float(outputs["time"][idx]),
                 int(outputs["time_bin"][idx]),
                 int(outputs["event"][idx]),
-                float(outputs["predicted_survival_time"][idx]),
+                (float(outputs["predicted_survival_time"][idx]) if has_curve else float("nan")),
                 float(outputs["risk"][idx]),
                 risk_groups[idx],
             ]
-            row.extend([float(1.0 - outputs["survival"][idx, landmark_map[year]]) for year in years])
+            if has_curve:
+                row.extend([
+                    float(1.0 - outputs["survival"][idx, landmark_map[year]]) for year in years
+                ])
             writer.writerow(row)
 
-    write_matrix_csv(out_dir / "logits.csv", outputs["patient_id"], outputs["logits"], bin_columns)
-    write_matrix_csv(out_dir / "hazards.csv", outputs["patient_id"], outputs["hazards"], bin_columns)
-    write_matrix_csv(
-        out_dir / "survival_curves.csv",
-        outputs["patient_id"],
-        outputs["survival"],
-        bin_columns,
-    )
+    if survival_loss_name == "nll":
+        write_matrix_csv(out_dir / "logits.csv", outputs["patient_id"], outputs["logits"], bin_columns)
+        write_matrix_csv(out_dir / "hazards.csv", outputs["patient_id"], outputs["hazards"], bin_columns)
+        write_matrix_csv(out_dir / "survival_curves.csv", outputs["patient_id"], outputs["survival"], bin_columns)
+    elif survival_loss_name == "deephit":
+        write_matrix_csv(out_dir / "logits.csv", outputs["patient_id"], outputs["logits"], bin_columns)
+        write_matrix_csv(out_dir / "pmf.csv", outputs["patient_id"], outputs["pmf"], bin_columns)
+        write_matrix_csv(out_dir / "survival_curves.csv", outputs["patient_id"], outputs["survival"], bin_columns)
+    elif survival_loss_name == "cox":
+        # Cox produces only a scalar risk; no curve outputs.
+        pass
+    else:
+        raise ValueError(f"Unknown survival_loss_name: {survival_loss_name!r}")
 
 
-def compute_metrics(outputs):
-    return {
+def compute_metrics(outputs, survival_loss_name):
+    metrics = {
         "c_index": concordance_index(outputs["time"], outputs["risk"], outputs["event"]),
-        "ibs": integrated_brier_score(
-            torch.as_tensor(outputs["survival"]),
-            torch.as_tensor(outputs["time_bin"]),
-            torch.as_tensor(outputs["event"]),
-        ),
         "n_patients": len(outputs["patient_id"]),
         "n_events": int(np.sum(outputs["event"])),
     }
+    if survival_loss_name in ("nll", "deephit"):
+        metrics["ibs"] = integrated_brier_score(
+            torch.as_tensor(outputs["survival"]),
+            torch.as_tensor(outputs["time_bin"]),
+            torch.as_tensor(outputs["event"]),
+        )
+    else:
+        metrics["ibs"] = float("nan")
+    return metrics
 
 
 def plot_km_high_low(outputs, cutoff, path):
@@ -477,6 +508,8 @@ def run_fold(cfg, exp_dir, pred_dir, fold, device, metrics_rows, pooled_val_risk
     datamodule.setup("predict")
 
     num_bins = int(training_cfg.model.num_time_bins)
+    survival_loss_cfg = training_cfg.model.get("survival_loss", {"name": "nll"})
+    survival_loss_name = str(survival_loss_cfg.get("name", "nll")).lower()
     bin_columns = _bin_columns(cfg.time_bin_labels, num_bins)
     landmark_map = _landmark_indices(
         cfg.landmark_years,
@@ -490,6 +523,8 @@ def run_fold(cfg, exp_dir, pred_dir, fold, device, metrics_rows, pooled_val_risk
         ("test", prediction_dataloader(datamodule, datamodule.test_dataset), datamodule.test_dataset),
     ]:
         outputs = run_split_inference(model, dataloader, dataset, device, split, fold)
+        if survival_loss_name == "cox":
+            outputs["risk"] = outputs["risk_scalar"]
         if split == "val":
             cutoff = float(np.median(outputs["risk"]))
             pooled_val_risks.extend(outputs["risk"].tolist())
@@ -502,13 +537,13 @@ def run_fold(cfg, exp_dir, pred_dir, fold, device, metrics_rows, pooled_val_risk
             cutoff_source = "fold_val_median"
 
         out_dir = pred_dir / f"fold_{fold}" / split
-        write_predictions(outputs, out_dir, bin_columns, landmark_map, cutoff)
+        write_predictions(outputs, out_dir, bin_columns, landmark_map, cutoff, survival_loss_name)
         plot_km_high_low(outputs, cutoff, out_dir / "km_high_low.png")
         lmk_rows = landmark_rows(outputs, landmark_map, cutoff)
         write_landmark_risks(lmk_rows, out_dir / "landmark_risks.csv")
         plot_landmark_bars(lmk_rows, out_dir / "landmark_risk_bars.png")
 
-        metrics = compute_metrics(outputs)
+        metrics = compute_metrics(outputs, survival_loss_name)
         metrics_rows.append(
             {
                 "scope": "fold",
@@ -537,8 +572,46 @@ def run_fold(cfg, exp_dir, pred_dir, fold, device, metrics_rows, pooled_val_risk
     }
 
 
-def make_ensemble_outputs(fold_results):
+def make_ensemble_outputs(fold_results, survival_loss_name):
     base = fold_results[0]["test_outputs"]
+
+    if survival_loss_name == "cox":
+        risk = np.stack(
+            [result["test_outputs"]["risk"] for result in fold_results],
+            axis=0,
+        ).mean(axis=0)
+        return {
+            "patient_id": base["patient_id"],
+            "split": "test",
+            "fold": "ensemble",
+            "time_bin": base["time_bin"],
+            "time": base["time"],
+            "event": base["event"],
+            "risk": risk,
+            "predicted_survival_time": np.full_like(risk, fill_value=np.nan, dtype=float),
+        }
+
+    if survival_loss_name == "deephit":
+        pmf = np.stack(
+            [result["test_outputs"]["pmf"] for result in fold_results],
+            axis=0,
+        ).mean(axis=0)
+        survival = (1.0 - np.cumsum(pmf, axis=1)).clip(0.0, 1.0)
+        survival_time = survival.sum(axis=1)
+        return {
+            "patient_id": base["patient_id"],
+            "split": "test",
+            "fold": "ensemble",
+            "time_bin": base["time_bin"],
+            "time": base["time"],
+            "event": base["event"],
+            "pmf": pmf,
+            "survival": survival,
+            "predicted_survival_time": survival_time,
+            "risk": -survival.sum(axis=1),
+        }
+
+    # nll (default) — unchanged behaviour
     logits = np.stack([result["test_outputs"]["logits"] for result in fold_results], axis=0).mean(axis=0)
     hazards = _tensor_to_numpy(logits_to_hazard(torch.as_tensor(logits)))
     survival = _tensor_to_numpy(hazard_to_survival(torch.as_tensor(hazards)))
@@ -605,7 +678,13 @@ def _inference_impl(cfg):
         cutoff_path.parent.mkdir(parents=True, exist_ok=True)
         cutoff_path.write_text(json.dumps({"pooled_oof_cutoff": pooled_cutoff}, indent=2))
 
-        ensemble = make_ensemble_outputs(fold_results)
+        survival_loss_name = str(
+            fold_results[0]["training_cfg"].model.get(
+                "survival_loss", {"name": "nll"}
+            ).get("name", "nll")
+        ).lower()
+
+        ensemble = make_ensemble_outputs(fold_results, survival_loss_name)
         out_dir = pred_dir / "ensemble" / "test"
         write_predictions(
             ensemble,
@@ -613,12 +692,13 @@ def _inference_impl(cfg):
             fold_results[0]["bin_columns"],
             fold_results[0]["landmark_map"],
             pooled_cutoff,
+            survival_loss_name,
         )
         plot_km_high_low(ensemble, pooled_cutoff, out_dir / "km_high_low.png")
         lmk_rows = landmark_rows(ensemble, fold_results[0]["landmark_map"], pooled_cutoff)
         write_landmark_risks(lmk_rows, out_dir / "landmark_risks.csv")
         plot_landmark_bars(lmk_rows, out_dir / "landmark_risk_bars.png")
-        metrics = compute_metrics(ensemble)
+        metrics = compute_metrics(ensemble, survival_loss_name)
         metrics_rows.append(
             {
                 "scope": "ensemble",
