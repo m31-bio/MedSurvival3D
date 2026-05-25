@@ -494,3 +494,31 @@ class DeepHitLoss(nn.Module):
         rank = self._loss_ranking(pmf, time_bin, mask2, event)
         cal = self._loss_calibration(pmf, mask2, event)
         return self.alpha * ll + self.beta * rank + self.gamma * cal
+
+
+def build_survival_criterion(cfg, num_time_bins: int):
+    """Return (name, criterion) for a survival_loss config block.
+
+    ``cfg`` is the OmegaConf/dict block under ``model.survival_loss``, or
+    ``None`` (in which case the default ``{name: 'nll'}`` is used).
+    """
+    if cfg is None:
+        cfg = {"name": "nll"}
+    # OmegaConf nodes behave dict-like enough for our purposes.
+    name = str(cfg["name"]).lower()
+
+    if name == "nll":
+        return name, NLLSurvLoss(reduction=cfg.get("reduction", "mean"))
+    if name == "cox":
+        return name, CoxPHLoss(reduction=cfg.get("reduction", "mean"))
+    if name == "deephit":
+        return name, DeepHitLoss(
+            num_time_bins=num_time_bins,
+            alpha=float(cfg.get("alpha", 1.0)),
+            beta=float(cfg.get("beta", 0.5)),
+            gamma=float(cfg.get("gamma", 0.0)),
+            sigma=float(cfg.get("sigma", 0.1)),
+        )
+    raise ValueError(
+        f"Unknown survival_loss.name: {name!r}. Expected one of: nll, cox, deephit."
+    )

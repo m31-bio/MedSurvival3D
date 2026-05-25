@@ -27,12 +27,23 @@ from metrics.conf_mat import ConfusionMatrix
 from regularization.sam import SAM
 from survival_utils import (
     CoxPHLoss,
+    DeepHitLoss,
     NLLSurvLoss,
+    build_survival_criterion,
     concordance_index,
     integrated_brier_score,
     integrated_brier_score_ipcw,
     time_dependent_auc,
 )
+
+
+def _reject_legacy_cox_loss_lambda(kwargs):
+    if "cox_loss_lambda" in kwargs and kwargs["cox_loss_lambda"] is not None:
+        raise ValueError(
+            "`cox_loss_lambda` is no longer supported. Use "
+            "`model.survival_loss: {name: cox}` to train Cox alone or "
+            "`{name: nll}` for plain NLL."
+        )
 
 
 class BaseModel(L.LightningModule):
@@ -245,19 +256,18 @@ class BaseModel(L.LightningModule):
         elif self.task == "Regression":
             self.criterion = nn.MSELoss()
         elif self.task == "Survival":
-            self.criterion = NLLSurvLoss(
-                reduction=kwargs.get("survival_loss_reduction", "mean")
-            )
-            self.cox_criterion = CoxPHLoss(
-                reduction=kwargs.get("survival_cox_loss_reduction", "mean")
-            )
-            self.survival_cox_loss_lambda = float(
-                kwargs.get(
-                    "cox_loss_lambda",
-                    kwargs.get("survival_cox_loss_lambda", 0.0),
-                )
-            )
+            _reject_legacy_cox_loss_lambda(kwargs)
+
             self.num_time_bins = int(kwargs.get("num_time_bins", num_classes))
+
+            survival_loss_cfg = kwargs.get("survival_loss")
+            if survival_loss_cfg is None:
+                survival_loss_cfg = {"name": "nll"}
+            self.survival_loss_cfg = survival_loss_cfg
+            self.survival_loss_name, self.criterion = build_survival_criterion(
+                survival_loss_cfg, num_time_bins=self.num_time_bins,
+            )
+
             default_cut_points_years = (
                 [1.0, 2.0, 3.0, 5.0]
                 if self.num_time_bins == 5
@@ -393,15 +403,18 @@ class BaseModel(L.LightningModule):
 
     def _survival_loss(self, y_hat, y):
         time_bin, event, continuous_time = self._unpack_survival_targets(y)
-        nll_loss = self.criterion(y_hat["logits"], time_bin, event)
-        risk = -y_hat["survival"].sum(dim=1)
-        cox_loss = self.cox_criterion(risk, continuous_time, event)
-        total_loss = nll_loss + self.survival_cox_loss_lambda * cox_loss
-        loss_parts = {
-            "total": total_loss,
-            "nll": nll_loss,
-            "cox": cox_loss,
-        }
+        name = self.survival_loss_name
+
+        if name == "nll":
+            loss = self.criterion(y_hat["logits"], time_bin, event)
+        elif name == "cox":
+            loss = self.criterion(y_hat["risk"], continuous_time, event)
+        elif name == "deephit":
+            loss = self.criterion(y_hat["pmf"], time_bin, event)
+        else:
+            raise ValueError(f"Unexpected survival_loss_name: {name!r}")
+
+        loss_parts = {"total": loss, name: loss}
         return loss_parts, time_bin, event, continuous_time
 
     def _update_survival_metric_buffers(
@@ -630,16 +643,8 @@ class BaseModel(L.LightningModule):
                 sync_dist=True,
             )
             self.log(
-                "Train/NLLLoss",
-                loss_parts["nll"],
-                on_step=False,
-                on_epoch=True,
-                prog_bar=False,
-                sync_dist=True,
-            )
-            self.log(
-                "Train/CoxPHLoss",
-                loss_parts["cox"],
+                f"Train/{self.survival_loss_name.upper()}Loss",
+                loss_parts[self.survival_loss_name],
                 on_step=False,
                 on_epoch=True,
                 prog_bar=False,
@@ -769,16 +774,8 @@ class BaseModel(L.LightningModule):
                 sync_dist=True,
             )
             self.log(
-                "Val/NLLLoss",
-                val_loss_parts["nll"],
-                on_step=False,
-                on_epoch=True,
-                prog_bar=False,
-                sync_dist=True,
-            )
-            self.log(
-                "Val/CoxPHLoss",
-                val_loss_parts["cox"],
+                f"Val/{self.survival_loss_name.upper()}Loss",
+                val_loss_parts[self.survival_loss_name],
                 on_step=False,
                 on_epoch=True,
                 prog_bar=False,
