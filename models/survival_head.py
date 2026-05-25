@@ -116,9 +116,17 @@ class PredictionHead(nn.Module):
         risk = self.fc_risk(x).squeeze(-1)
 
         hazard = logits_to_hazard(hazard_logits)
-        pmf = F.softmax(pmf_logits, dim=1)
+        pmf = F.softmax(pmf_logits.float(), dim=1)
         survival = self._survival_for_active_loss(hazard, pmf)
 
+        # Stable dict: every key is present in every mode, but only some are
+        # trained/meaningful for the active loss.
+        #   nll     -> logits, hazard, survival, survival_time meaningful;
+        #              pmf and risk come from untrained terminals.
+        #   deephit -> pmf, survival, survival_time meaningful;
+        #              logits, hazard, and risk come from untrained terminals.
+        #   cox     -> risk meaningful; logits/hazard/pmf/survival/survival_time
+        #              all come from untrained terminals.
         return {
             "logits": hazard_logits,
             "hazard": hazard,
