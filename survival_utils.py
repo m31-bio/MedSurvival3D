@@ -375,3 +375,116 @@ class CoxPHLoss(nn.Module):
         if self.reduction == "sum":
             return neg_log_lik.sum()
         return neg_log_lik
+
+
+class DeepHitLoss(nn.Module):
+    """
+    Single-event DeepHit loss (Lee et al. 2018) as a PyTorch ``nn.Module``.
+
+    Inputs to ``forward``:
+        - ``pmf``: ``[B, num_time_bins]`` tensor, softmax over time bins.
+        - ``time_bin``: ``[B]`` int64 tensor, 0-indexed bin of event/censor time.
+        - ``event``: ``[B]`` tensor in {0, 1}; 1 if the event was observed.
+
+    Output: scalar = ``alpha * LL + beta * Ranking + gamma * Calibration``.
+    """
+
+    _EPSILON = 1e-7
+
+    def __init__(
+        self,
+        num_time_bins: int,
+        alpha: float = 1.0,
+        beta: float = 0.5,
+        gamma: float = 0.0,
+        sigma: float = 0.1,
+    ):
+        super().__init__()
+        if num_time_bins < 2:
+            raise ValueError("num_time_bins must be >= 2.")
+        if sigma <= 0.0:
+            raise ValueError("sigma must be > 0.")
+        self.num_time_bins = num_time_bins
+        self.alpha = float(alpha)
+        self.beta = float(beta)
+        self.gamma = float(gamma)
+        self.sigma = float(sigma)
+
+    def _masks(self, time_bin: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Build (mask1, mask2) from the time-bin index.
+
+        mask1[i, t] = 1 iff t == time_bin[i]            (event point)
+        mask2[i, t] = 1 iff t >= time_bin[i]            (survival region)
+        """
+        idx = torch.arange(self.num_time_bins, device=time_bin.device).view(1, -1)
+        t = time_bin.view(-1, 1)
+        mask1 = (idx == t).to(dtype=torch.float32)
+        mask2 = (idx >= t).to(dtype=torch.float32)
+        return mask1, mask2
+
+    def _loss_log_likelihood(
+        self,
+        pmf: torch.Tensor,
+        mask1: torch.Tensor,
+        mask2: torch.Tensor,
+        event: torch.Tensor,
+    ) -> torch.Tensor:
+        eps = self._EPSILON
+        observed = (mask1 * pmf).sum(dim=1).clamp_min(eps)
+        censored = (mask2 * pmf).sum(dim=1).clamp_min(eps)
+        log_obs = torch.log(observed)
+        log_cen = torch.log(censored)
+        return -(event * log_obs + (1.0 - event) * log_cen).mean()
+
+    def _loss_ranking(
+        self,
+        pmf: torch.Tensor,
+        time_bin: torch.Tensor,
+        mask2: torch.Tensor,
+        event: torch.Tensor,
+    ) -> torch.Tensor:
+        """Pairwise ranking penalty at each uncensored event time."""
+        if event.sum() == 0:
+            return pmf.sum() * 0.0
+
+        cif_at_t = (pmf.unsqueeze(1) * mask2.unsqueeze(0)).sum(dim=2)
+        diag = torch.diagonal(cif_at_t)
+        diff = diag.view(-1, 1) - cif_at_t
+
+        t_i = time_bin.view(-1, 1).float()
+        t_j = time_bin.view(1, -1).float()
+        ordered = (t_i < t_j).to(dtype=torch.float32)
+        event_i = event.view(-1, 1)
+        weight = ordered * event_i
+
+        denom = weight.sum().clamp_min(1.0)
+        return (weight * torch.exp(-diff / self.sigma)).sum() / denom
+
+    def _loss_calibration(
+        self,
+        pmf: torch.Tensor,
+        mask2: torch.Tensor,
+        event: torch.Tensor,
+    ) -> torch.Tensor:
+        per_subject = (pmf * mask2).sum(dim=1) - event
+        return (per_subject ** 2).mean()
+
+    def forward(
+        self,
+        pmf: torch.Tensor,
+        time_bin: torch.Tensor,
+        event: torch.Tensor,
+    ) -> torch.Tensor:
+        pmf = pmf.float()
+        time_bin = time_bin.to(device=pmf.device, dtype=torch.long).view(-1)
+        event = event.to(device=pmf.device, dtype=torch.float32).view(-1)
+        time_bin = time_bin.clamp(0, self.num_time_bins - 1)
+
+        mask1, mask2 = self._masks(time_bin)
+        mask1 = mask1.to(pmf.device)
+        mask2 = mask2.to(pmf.device)
+
+        ll = self._loss_log_likelihood(pmf, mask1, mask2, event)
+        rank = self._loss_ranking(pmf, time_bin, mask2, event)
+        cal = self._loss_calibration(pmf, mask2, event)
+        return self.alpha * ll + self.beta * rank + self.gamma * cal
