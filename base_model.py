@@ -420,17 +420,23 @@ class BaseModel(L.LightningModule):
         event,
         continuous_time,
     ):
-        risk = -y_hat["survival_time"].detach()
-        survival = y_hat["survival"].detach()
+        if self.survival_loss_name == "cox":
+            risk = y_hat["risk"].detach()
+            survival = None
+        else:
+            risk = -y_hat["survival_time"].detach()
+            survival = y_hat["survival"].detach()
         if split == "train":
             self.train_survival_risks.append(risk)
-            self.train_survival_curves.append(survival)
+            if survival is not None:
+                self.train_survival_curves.append(survival)
             self.train_survival_time_bins.append(time_bin.detach())
             self.train_survival_continuous_times.append(continuous_time.detach())
             self.train_survival_events.append(event.detach())
         elif split == "val":
             self.val_survival_risks.append(risk)
-            self.val_survival_curves.append(survival)
+            if survival is not None:
+                self.val_survival_curves.append(survival)
             self.val_survival_time_bins.append(time_bin.detach())
             self.val_survival_continuous_times.append(continuous_time.detach())
             self.val_survival_events.append(event.detach())
@@ -507,25 +513,6 @@ class BaseModel(L.LightningModule):
             torch.cat(risks),
             all_events,
         )
-        all_survival_curves = torch.cat(survival_curves)
-        brier = integrated_brier_score(
-            all_survival_curves,
-            all_time_bins,
-            all_events,
-        )
-        brier_ipcw = integrated_brier_score_ipcw(
-            all_survival_curves,
-            all_time_bins,
-            all_events,
-        )
-        landmark_aucs = time_dependent_auc(
-            all_survival_curves,
-            all_continuous_times,
-            all_events,
-            self.survival_landmark_years,
-            self.survival_cut_points_years,
-        )
-        valid_landmark_aucs = []
         self.log(
             c_index_metric_name,
             c_index,
@@ -540,51 +527,72 @@ class BaseModel(L.LightningModule):
             c_index,
             prog_bar=True,
         )
-        self.log(
-            brier_metric_name,
-            brier,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-            logger=True,
-            sync_dist=True,
-        )
-        self.log(
-            brier_ipcw_metric_name,
-            brier_ipcw,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-            logger=True,
-            sync_dist=True,
-        )
-        for landmark, label in zip(
-            self.survival_landmark_years.detach().cpu().tolist(),
-            self.survival_landmark_labels,
-        ):
-            auc = landmark_aucs.get(float(landmark), float("nan"))
-            if math.isnan(auc):
-                continue
-            valid_landmark_aucs.append(auc)
-            self.log(
-                f"{split.capitalize()}/AUC@{label}",
-                auc,
-                on_step=False,
-                on_epoch=True,
-                prog_bar=False,
-                logger=True,
-                sync_dist=True,
+
+        if survival_curves:
+            all_survival_curves = torch.cat(survival_curves)
+            brier = integrated_brier_score(
+                all_survival_curves,
+                all_time_bins,
+                all_events,
             )
-        if valid_landmark_aucs:
+            brier_ipcw = integrated_brier_score_ipcw(
+                all_survival_curves,
+                all_time_bins,
+                all_events,
+            )
+            landmark_aucs = time_dependent_auc(
+                all_survival_curves,
+                all_continuous_times,
+                all_events,
+                self.survival_landmark_years,
+                self.survival_cut_points_years,
+            )
+            valid_landmark_aucs = []
             self.log(
-                f"{split.capitalize()}/mean_AUC_landmarks",
-                sum(valid_landmark_aucs) / len(valid_landmark_aucs),
+                brier_metric_name,
+                brier,
                 on_step=False,
                 on_epoch=True,
                 prog_bar=True,
                 logger=True,
                 sync_dist=True,
             )
+            self.log(
+                brier_ipcw_metric_name,
+                brier_ipcw,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=True,
+                logger=True,
+                sync_dist=True,
+            )
+            for landmark, label in zip(
+                self.survival_landmark_years.detach().cpu().tolist(),
+                self.survival_landmark_labels,
+            ):
+                auc = landmark_aucs.get(float(landmark), float("nan"))
+                if math.isnan(auc):
+                    continue
+                valid_landmark_aucs.append(auc)
+                self.log(
+                    f"{split.capitalize()}/AUC@{label}",
+                    auc,
+                    on_step=False,
+                    on_epoch=True,
+                    prog_bar=False,
+                    logger=True,
+                    sync_dist=True,
+                )
+            if valid_landmark_aucs:
+                self.log(
+                    f"{split.capitalize()}/mean_AUC_landmarks",
+                    sum(valid_landmark_aucs) / len(valid_landmark_aucs),
+                    on_step=False,
+                    on_epoch=True,
+                    prog_bar=True,
+                    logger=True,
+                    sync_dist=True,
+                )
 
         risks.clear()
         survival_curves.clear()
@@ -783,7 +791,10 @@ class BaseModel(L.LightningModule):
                 idx = torch.arange(
                     start_idx, start_idx + actual_batch_size, device=self.device
                 )
-                self.val_preds.update(y_hat["survival_time"].detach())
+                if self.survival_loss_name == "cox":
+                    self.val_preds.update(y_hat["risk"].detach())
+                else:
+                    self.val_preds.update(y_hat["survival_time"].detach())
                 self.val_labels.update(
                     self._survival_label_tensor(time_bin, event).detach()
                 )
@@ -927,16 +938,27 @@ class BaseModel(L.LightningModule):
                 if self.save_preds:
 
                     if self.task == "Survival":
-                        columns = [
-                            "GT_time_bin",
-                            "GT_event",
-                            "Pred_survival_time",
-                            "Pred_risk",
-                        ]
-                        data = [
-                            [x[0].item(), x[1].item(), y.item(), -y.item()]
-                            for x, y in zip(labels_all, preds_all)
-                        ]
+                        if self.survival_loss_name == "cox":
+                            columns = [
+                                "GT_time_bin",
+                                "GT_event",
+                                "Pred_risk",
+                            ]
+                            data = [
+                                [x[0].item(), x[1].item(), y.item()]
+                                for x, y in zip(labels_all, preds_all)
+                            ]
+                        else:
+                            columns = [
+                                "GT_time_bin",
+                                "GT_event",
+                                "Pred_survival_time",
+                                "Pred_risk",
+                            ]
+                            data = [
+                                [x[0].item(), x[1].item(), y.item(), -y.item()]
+                                for x, y in zip(labels_all, preds_all)
+                            ]
                         table = wandb.Table(data=data, columns=columns)
                         wandb.log({"Val Predictions": table})
                     elif self.task == "Classification":
