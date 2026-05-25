@@ -10,6 +10,7 @@ from survival_utils import (  # noqa: E402
     CoxPHLoss,
     DeepHitLoss,
     NLLSurvLoss,
+    _reject_legacy_cox_loss_lambda,
     build_survival_criterion,
 )
 
@@ -63,8 +64,6 @@ def test_unknown_name_raises():
 
 def test_legacy_cox_loss_lambda_rejected():
     """Configs still carrying cox_loss_lambda must raise with a migration hint."""
-    from base_model import _reject_legacy_cox_loss_lambda
-
     try:
         _reject_legacy_cox_loss_lambda({"cox_loss_lambda": 0.09})
     except ValueError as exc:

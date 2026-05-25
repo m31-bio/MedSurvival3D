@@ -496,6 +496,15 @@ class DeepHitLoss(nn.Module):
         return self.alpha * ll + self.beta * rank + self.gamma * cal
 
 
+def _reject_legacy_cox_loss_lambda(kwargs):
+    if "cox_loss_lambda" in kwargs and kwargs["cox_loss_lambda"] is not None:
+        raise ValueError(
+            "`cox_loss_lambda` is no longer supported. Use "
+            "`model.survival_loss: {name: cox}` to train Cox alone or "
+            "`{name: nll}` for plain NLL."
+        )
+
+
 def build_survival_criterion(cfg, num_time_bins: int):
     """Return (name, criterion) for a survival_loss config block.
 
@@ -505,6 +514,10 @@ def build_survival_criterion(cfg, num_time_bins: int):
     if cfg is None:
         cfg = {"name": "nll"}
     # OmegaConf nodes behave dict-like enough for our purposes.
+    if "name" not in cfg:
+        raise ValueError(
+            "survival_loss block must specify 'name' (one of: nll, cox, deephit)."
+        )
     name = str(cfg["name"]).lower()
 
     if name == "nll":

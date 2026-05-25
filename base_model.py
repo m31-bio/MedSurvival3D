@@ -26,9 +26,7 @@ from augmentation.mixup import mixup_criterion, mixup_data
 from metrics.conf_mat import ConfusionMatrix
 from regularization.sam import SAM
 from survival_utils import (
-    CoxPHLoss,
-    DeepHitLoss,
-    NLLSurvLoss,
+    _reject_legacy_cox_loss_lambda,
     build_survival_criterion,
     concordance_index,
     integrated_brier_score,
@@ -37,13 +35,11 @@ from survival_utils import (
 )
 
 
-def _reject_legacy_cox_loss_lambda(kwargs):
-    if "cox_loss_lambda" in kwargs and kwargs["cox_loss_lambda"] is not None:
-        raise ValueError(
-            "`cox_loss_lambda` is no longer supported. Use "
-            "`model.survival_loss: {name: cox}` to train Cox alone or "
-            "`{name: nll}` for plain NLL."
-        )
+_SURVIVAL_LOSS_TAGS = {
+    "nll": "NLL",
+    "cox": "CoxPH",
+    "deephit": "DeepHit",
+}
 
 
 class BaseModel(L.LightningModule):
@@ -263,7 +259,6 @@ class BaseModel(L.LightningModule):
             survival_loss_cfg = kwargs.get("survival_loss")
             if survival_loss_cfg is None:
                 survival_loss_cfg = {"name": "nll"}
-            self.survival_loss_cfg = survival_loss_cfg
             self.survival_loss_name, self.criterion = build_survival_criterion(
                 survival_loss_cfg, num_time_bins=self.num_time_bins,
             )
@@ -643,7 +638,7 @@ class BaseModel(L.LightningModule):
                 sync_dist=True,
             )
             self.log(
-                f"Train/{self.survival_loss_name.upper()}Loss",
+                f"Train/{_SURVIVAL_LOSS_TAGS[self.survival_loss_name]}Loss",
                 loss_parts[self.survival_loss_name],
                 on_step=False,
                 on_epoch=True,
@@ -774,7 +769,7 @@ class BaseModel(L.LightningModule):
                 sync_dist=True,
             )
             self.log(
-                f"Val/{self.survival_loss_name.upper()}Loss",
+                f"Val/{_SURVIVAL_LOSS_TAGS[self.survival_loss_name]}Loss",
                 val_loss_parts[self.survival_loss_name],
                 on_step=False,
                 on_epoch=True,
