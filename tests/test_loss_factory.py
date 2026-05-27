@@ -73,6 +73,32 @@ def test_legacy_cox_loss_lambda_rejected():
         raise AssertionError("expected ValueError")
 
 
+def test_soft_logrank_defaults():
+    from survival_utils import SoftLogRankLoss  # noqa: WPS433
+    name, fn = build_survival_criterion({"name": "soft_logrank"}, num_time_bins=5)
+    assert name == "soft_logrank"
+    assert isinstance(fn, SoftLogRankLoss)
+    assert fn.lambda_balance == 0.01
+    assert fn.min_frac == 0.20
+    assert fn.max_frac == 0.80
+
+
+def test_soft_logrank_reads_hyperparameters():
+    from survival_utils import SoftLogRankLoss  # noqa: WPS433
+    cfg = {
+        "name": "soft_logrank",
+        "lambda_balance": 0.02,
+        "min_frac": 0.25,
+        "max_frac": 0.75,
+    }
+    name, fn = build_survival_criterion(cfg, num_time_bins=5)
+    assert name == "soft_logrank"
+    assert isinstance(fn, SoftLogRankLoss)
+    assert fn.lambda_balance == 0.02
+    assert fn.min_frac == 0.25
+    assert fn.max_frac == 0.75
+
+
 if __name__ == "__main__":
     test_nll()
     test_cox()
@@ -81,4 +107,6 @@ if __name__ == "__main__":
     test_missing_block_defaults_to_nll()
     test_unknown_name_raises()
     test_legacy_cox_loss_lambda_rejected()
+    test_soft_logrank_defaults()
+    test_soft_logrank_reads_hyperparameters()
     print("OK")

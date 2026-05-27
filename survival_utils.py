@@ -557,6 +557,56 @@ class DeepHitLoss(nn.Module):
         return self.alpha * ll + self.beta * rank + self.gamma * cal
 
 
+class SoftLogRankLoss(nn.Module):
+    """Differentiable Mantel-Cox log-rank loss + weak group-balance penalty.
+
+    ``forward`` takes ``p_high`` in [0, 1], continuous ``time``, and binary
+    ``event`` and returns ``(total, components)`` where ``components`` exposes
+    the individual terms and diagnostic statistics for logging.
+    """
+
+    def __init__(
+        self,
+        lambda_balance: float = 0.01,
+        min_frac: float = 0.20,
+        max_frac: float = 0.80,
+    ):
+        super().__init__()
+        if lambda_balance < 0.0:
+            raise ValueError("lambda_balance must be non-negative.")
+        if not 0.0 <= min_frac <= max_frac <= 1.0:
+            raise ValueError("require 0 <= min_frac <= max_frac <= 1.")
+        self.lambda_balance = float(lambda_balance)
+        self.min_frac = float(min_frac)
+        self.max_frac = float(max_frac)
+
+    def forward(
+        self,
+        p_high: torch.Tensor,
+        time: torch.Tensor,
+        event: torch.Tensor,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        logrank = soft_logrank_loss(p_high, time, event)
+        balance = group_balance_penalty(
+            p_high,
+            min_frac=self.min_frac,
+            max_frac=self.max_frac,
+        )
+        total = logrank + self.lambda_balance * balance
+
+        with torch.no_grad():
+            p_h = p_high.detach().float().view(-1)
+            components = {
+                "logrank": logrank.detach(),
+                "balance": balance.detach(),
+                "p_high_mean": p_h.mean(),
+                "p_high_min": p_h.min() if p_h.numel() > 0 else torch.tensor(0.0, device=p_h.device),
+                "p_high_max": p_h.max() if p_h.numel() > 0 else torch.tensor(0.0, device=p_h.device),
+                "fraction_high_hard": (p_h >= 0.5).float().mean(),
+            }
+        return total, components
+
+
 def _reject_legacy_cox_loss_lambda(kwargs):
     if "cox_loss_lambda" in kwargs and kwargs["cox_loss_lambda"] is not None:
         raise ValueError(
@@ -598,6 +648,13 @@ def build_survival_criterion(cfg, num_time_bins: int):
             gamma=float(cfg.get("gamma", 0.0)),
             sigma=float(cfg.get("sigma", 0.1)),
         )
+    if name == "soft_logrank":
+        return name, SoftLogRankLoss(
+            lambda_balance=float(cfg.get("lambda_balance", 0.01)),
+            min_frac=float(cfg.get("min_frac", 0.20)),
+            max_frac=float(cfg.get("max_frac", 0.80)),
+        )
     raise ValueError(
-        f"Unknown survival_loss.name: {name!r}. Expected one of: nll, cox, deephit."
+        f"Unknown survival_loss.name: {name!r}. Expected one of: "
+        "nll, cox, deephit, soft_logrank."
     )
