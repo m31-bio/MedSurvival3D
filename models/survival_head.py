@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from survival_utils import hazard_to_survival, logits_to_hazard, survival_to_time
 
 
-_VALID_LOSSES = ("nll", "cox", "deephit")
+_VALID_LOSSES = ("nll", "cox", "deephit", "soft_logrank")
 
 
 class PredictionHead(nn.Module):
@@ -114,6 +114,11 @@ class PredictionHead(nn.Module):
         hazard_logits = self.fc_hazard(x)
         pmf_logits = self.fc_pmf(x)
         risk = self.fc_risk(x).squeeze(-1)
+        # p_high is the soft high-risk membership used by the soft_logrank loss
+        # and by inference's KM grouping. Derived from the same fc_risk scalar
+        # that Cox trains; under soft_logrank, gradient flows through sigmoid
+        # back into fc_risk.
+        p_high = torch.sigmoid(risk)
 
         hazard = logits_to_hazard(hazard_logits)
         pmf = F.softmax(pmf_logits.float(), dim=1)
@@ -121,12 +126,10 @@ class PredictionHead(nn.Module):
 
         # Stable dict: every key is present in every mode, but only some are
         # trained/meaningful for the active loss.
-        #   nll     -> logits, hazard, survival, survival_time meaningful;
-        #              pmf and risk come from untrained terminals.
-        #   deephit -> pmf, survival, survival_time meaningful;
-        #              logits, hazard, and risk come from untrained terminals.
-        #   cox     -> risk meaningful; logits/hazard/pmf/survival/survival_time
-        #              all come from untrained terminals.
+        #   nll          -> logits, hazard, survival, survival_time meaningful
+        #   deephit      -> pmf, survival, survival_time meaningful
+        #   cox          -> risk meaningful (as log hazard ratio)
+        #   soft_logrank -> risk meaningful (as logit); p_high = sigmoid(risk)
         return {
             "logits": hazard_logits,
             "hazard": hazard,
@@ -134,6 +137,7 @@ class PredictionHead(nn.Module):
             "risk": risk,
             "survival": survival,
             "survival_time": survival_to_time(survival),
+            "p_high": p_high,
         }
 
     def get_config(self) -> Dict[str, Any]:

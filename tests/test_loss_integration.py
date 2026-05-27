@@ -65,8 +65,43 @@ def test_deephit():
     })
 
 
+def test_soft_logrank():
+    """Under soft_logrank, gradient flows through fc_risk (same terminal as cox)."""
+    torch.manual_seed(0)
+    num_bins = 5
+    head = SurvivalHead(
+        input_dim=32,
+        num_time_bins=num_bins,
+        survival_loss_name="soft_logrank",
+    )
+    head.train()
+
+    feats = torch.randn(8, 32, requires_grad=False)
+    out = head(feats)
+    continuous_time = torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0, 1.0, 3.0, 5.0])
+    event = torch.tensor([1, 0, 1, 1, 0, 1, 0, 1], dtype=torch.float32)
+
+    _, criterion = build_survival_criterion(
+        {"name": "soft_logrank", "lambda_balance": 0.01},
+        num_time_bins=num_bins,
+    )
+    total, components = criterion(out["p_high"], continuous_time, event)
+    assert torch.isfinite(total)
+    assert "logrank" in components and "balance" in components
+
+    total.backward()
+
+    # fc_risk is the scalar terminal — same one cox uses.
+    assert head.fc_risk.weight.grad is not None
+    assert head.fc_risk.weight.grad.abs().sum() > 0
+    for terminal in ("fc_hazard", "fc_pmf"):
+        grad = getattr(head, terminal).weight.grad
+        assert grad is None or grad.abs().sum() == 0, terminal
+
+
 if __name__ == "__main__":
     test_nll()
     test_cox()
     test_deephit()
+    test_soft_logrank()
     print("OK")
