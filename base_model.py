@@ -36,7 +36,6 @@ from survival_utils import (
     max_logrank_cutpoint,
     time_dependent_auc,
 )
-from inference_survival import compute_hazard_ratio, compute_logrank_stat
 
 
 _SURVIVAL_LOSS_TAGS = {
@@ -653,22 +652,34 @@ class BaseModel(L.LightningModule):
             not self._stratification_landmark_bin_warned
             and abs(float(cut_points[bin_idx]) - landmark) > 1e-6
         ):
-            print(
-                "Warning: survival_stratification_landmark_year "
+            warnings.warn(
+                "survival_stratification_landmark_year "
                 f"{landmark} snapped to nearest cut point "
-                f"{float(cut_points[bin_idx])} (bin {bin_idx})."
+                f"{float(cut_points[bin_idx])} (bin {bin_idx}).",
+                stacklevel=2,
             )
             self._stratification_landmark_bin_warned = True
         return bin_idx
 
     def _compute_stratification_metrics(self):
         """Log {Train,Val}/{logrank_chi2,logrank_p,hazard_ratio} for the
-        current epoch. Must be called from on_validation_epoch_end while train
-        buffers are still populated (before on_train_epoch_end clears them).
+        current epoch.
+
+        Must be called from on_validation_epoch_end BEFORE
+        _log_survival_metrics("val") runs — that call clears the val buffers.
+        Train buffers stay populated because on_train_epoch_end fires only
+        after on_validation_epoch_end (Lightning convention).
 
         No-op during Lightning sanity check or when no training data has been
         seen this epoch (e.g. trainer.validate() runs).
         """
+        # Lazy import: inference_survival eagerly imports matplotlib, which
+        # would otherwise hit every training run / model construction.
+        from inference_survival import (
+            compute_hazard_ratio,
+            compute_logrank_stat,
+        )
+
         if getattr(self.trainer, "sanity_checking", False):
             return
         if not self.train_survival_risks:
