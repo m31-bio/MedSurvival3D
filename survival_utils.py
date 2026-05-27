@@ -658,3 +658,105 @@ def build_survival_criterion(cfg, num_time_bins: int):
         f"Unknown survival_loss.name: {name!r}. Expected one of: "
         "nll, cox, deephit, soft_logrank."
     )
+
+
+import math as _math
+import numpy as _np
+
+
+def _logrank_chi2(times, events, group_high):
+    """Mantel-Cox log-rank chi^2 (NumPy, no scipy). Mirrors the implementation
+    in inference_survival.compute_logrank_stat but returns only chi^2 and is
+    used internally by max_logrank_cutpoint for fast scanning.
+
+    Returns 0.0 when either group is empty so the caller can simply argmax.
+    """
+    times = _np.asarray(times, dtype=float)
+    events = _np.asarray(events, dtype=bool)
+    group_high = _np.asarray(group_high, dtype=bool)
+
+    if group_high.sum() == 0 or (~group_high).sum() == 0:
+        return 0.0
+
+    o_minus_e = 0.0
+    variance = 0.0
+    for t in _np.sort(_np.unique(times[events])):
+        at_risk = times >= t
+        n_total = at_risk.sum()
+        if n_total <= 1:
+            continue
+        n_high = (at_risk & group_high).sum()
+        d_total = ((times == t) & events).sum()
+        if d_total <= 0:
+            continue
+        d_high = ((times == t) & events & group_high).sum()
+        e_high = d_total * n_high / n_total
+        v = (
+            d_total
+            * n_high
+            * (n_total - n_high)
+            * (n_total - d_total)
+            / (n_total * n_total * (n_total - 1))
+        )
+        o_minus_e += d_high - e_high
+        variance += v
+
+    if variance <= 0:
+        return 0.0
+    return float((o_minus_e ** 2) / variance)
+
+
+def max_logrank_cutpoint(scores, times, events, q_lo=0.2, q_hi=0.8):
+    """Return the cutoff in `scores` that maximizes the log-rank chi^2 among
+    candidates drawn from the [quantile(scores, q_lo), quantile(scores, q_hi)]
+    bracket. Used for training-time stratification monitoring of NLL/Cox/DeepHit.
+
+    Note: the returned chi^2 is biased upward by the selection, so logged
+    chi^2 values are training diagnostics rather than formal significance tests.
+
+    Returns float('nan') when no valid candidate yields two non-empty groups.
+    At most 200 candidate cutoffs are evaluated; large input sets are
+    sub-sampled to a uniform quantile grid.
+    """
+    scores = _np.asarray(scores, dtype=float)
+    times = _np.asarray(times, dtype=float)
+    events = _np.asarray(events, dtype=bool)
+
+    if scores.size == 0 or events.sum() == 0:
+        return float("nan")
+
+    lo = float(_np.quantile(scores, q_lo))
+    hi = float(_np.quantile(scores, q_hi))
+    if lo >= hi:
+        return float("nan")
+
+    in_bracket = (scores >= lo) & (scores <= hi)
+    unique_candidates = _np.unique(scores[in_bracket])
+    if unique_candidates.size == 0:
+        return float("nan")
+
+    MAX_CANDIDATES = 200
+    if unique_candidates.size > MAX_CANDIDATES:
+        # Uniform quantile grid across the bracket.
+        qs = _np.linspace(q_lo, q_hi, MAX_CANDIDATES)
+        candidates = _np.unique(_np.quantile(scores, qs))
+    else:
+        candidates = unique_candidates
+
+    best_chi2 = -1.0
+    best_tied = []
+    for c in candidates:
+        group_high = scores >= c
+        if group_high.sum() == 0 or (~group_high).sum() == 0:
+            continue
+        chi2 = _logrank_chi2(times, events, group_high)
+        if chi2 > best_chi2:
+            best_chi2 = chi2
+            best_tied = [float(c)]
+        elif chi2 == best_chi2:
+            best_tied.append(float(c))
+
+    if best_chi2 < 0 or not best_tied:
+        return float("nan")
+    # Tie-break: median of tied candidates.
+    return float(_np.median(_np.asarray(best_tied)))
