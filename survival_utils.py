@@ -764,3 +764,23 @@ def max_logrank_cutpoint(scores, times, events, q_lo=0.2, q_hi=0.8):
         return float("nan")
     # Tie-break: median of tied candidates.
     return float(_np.median(_np.asarray(best_tied)))
+
+
+def derive_stratification_scores(loss_name, risks, survival_curves, landmark_bin_idx):
+    """Return per-sample scalar stratification scores for a survival loss.
+
+    - cox / soft_logrank: returns `risks` unchanged (log-hazard or sigmoid logit).
+    - nll / deephit: returns 1 - survival_curves[:, landmark_bin_idx].
+
+    Raises ValueError for unrecognized loss names.
+    """
+    if loss_name in ("cox", "soft_logrank"):
+        if risks is None:
+            raise ValueError(f"{loss_name} requires `risks` array")
+        return _np.asarray(risks, dtype=float)
+    if loss_name in ("nll", "deephit"):
+        if survival_curves is None:
+            raise ValueError(f"{loss_name} requires `survival_curves` array")
+        curves = _np.asarray(survival_curves, dtype=float)
+        return 1.0 - curves[:, int(landmark_bin_idx)]
+    raise ValueError(f"Unknown survival_loss_name: {loss_name!r}")
