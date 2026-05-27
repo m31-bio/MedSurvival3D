@@ -6,7 +6,6 @@ from torch._dynamo import OptimizedModule
 import torch.distributed as dist
 
 from base_model import BaseModel
-from models.classification_head import ClassificationHead
 from models.survival_head import SurvivalHead
 
 
@@ -61,29 +60,6 @@ class ResEncoder(Module):
     def forward(self, x):
 
         x = self.res_unet.encoder(x).mean(dim=[2, 3, 4])
-
-        return x
-
-
-class ResEncoder_Classifier(BaseModel):
-    def __init__(
-        self,
-        **hypparams,
-    ):
-        super(ResEncoder_Classifier, self).__init__(**hypparams)
-
-        self.encoder = ResEncoder(**hypparams)
-
-        self.cls_head = ClassificationHead(
-            320,
-            hypparams["num_classes"],
-            dropout=hypparams["classification_head_dropout"],
-            patch_aggregation_method=hypparams["token_aggregation_method"],
-        )
-
-    def forward(self, x):
-        x = self.encoder(x)
-        x = self.cls_head(x)
 
         return x
 
