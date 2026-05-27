@@ -179,7 +179,8 @@ class _StubLogger:
 
 def _make_stub_model(loss_name, train_risks, val_risks, train_times, val_times,
                      train_events, val_events, train_curves=None, val_curves=None,
-                     cut_points=(1.0, 2.0, 3.0), landmark_year=2.0):
+                     cut_points=(1.0, 2.0, 3.0), landmark_year=2.0,
+                     soft_logrank_use_max_logrank_cutpoint=False):
     """Build a minimal object with the attrs _compute_stratification_metrics reads."""
     stub = types.SimpleNamespace()
     stub.survival_loss_name = loss_name
@@ -194,6 +195,7 @@ def _make_stub_model(loss_name, train_risks, val_risks, train_times, val_times,
     stub.survival_cut_points_years = torch.tensor(cut_points, dtype=torch.float32)
     stub.survival_stratification_landmark_year = landmark_year
     stub.survival_stratification_quantile_range = (0.2, 0.8)
+    stub.soft_logrank_use_max_logrank_cutpoint = soft_logrank_use_max_logrank_cutpoint
     stub._stratification_landmark_bin_warned = False
     # Bind the unbound method so `self._resolve_stratification_landmark_bin()`
     # in _compute_stratification_metrics resolves correctly on the stub.
