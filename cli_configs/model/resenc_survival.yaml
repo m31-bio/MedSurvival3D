@@ -3,6 +3,7 @@ model:
   _target_: models.resenc.ResEncoder_Survival
   pretrained: True
   chpt_path: null
+  num_classes: 1
   num_time_bins: 5
   survival_cut_points_years: [1.0, 2.0, 3.0, 5.0]
   survival_landmark_years: [1.0, 2.0, 3.0, 5.0]
