@@ -2,6 +2,7 @@ import math
 import warnings
 
 import lightning as L
+import numpy as np
 import torch
 import torch.nn as nn
 import wandb
@@ -29,10 +30,13 @@ from survival_utils import (
     _reject_legacy_cox_loss_lambda,
     build_survival_criterion,
     concordance_index,
+    derive_stratification_scores,
     integrated_brier_score,
     integrated_brier_score_ipcw,
+    max_logrank_cutpoint,
     time_dependent_auc,
 )
+from inference_survival import compute_hazard_ratio, compute_logrank_stat
 
 
 _SURVIVAL_LOSS_TAGS = {
@@ -639,6 +643,104 @@ class BaseModel(L.LightningModule):
         continuous_times.clear()
         events.clear()
 
+    def _resolve_stratification_landmark_bin(self):
+        """Return the bin index in survival_cut_points_years nearest the
+        configured landmark year."""
+        cut_points = self.survival_cut_points_years.detach().cpu().numpy()
+        landmark = float(self.survival_stratification_landmark_year)
+        bin_idx = int(np.argmin(np.abs(cut_points - landmark)))
+        if (
+            not self._stratification_landmark_bin_warned
+            and abs(float(cut_points[bin_idx]) - landmark) > 1e-6
+        ):
+            print(
+                "Warning: survival_stratification_landmark_year "
+                f"{landmark} snapped to nearest cut point "
+                f"{float(cut_points[bin_idx])} (bin {bin_idx})."
+            )
+            self._stratification_landmark_bin_warned = True
+        return bin_idx
+
+    def _compute_stratification_metrics(self):
+        """Log {Train,Val}/{logrank_chi2,logrank_p,hazard_ratio} for the
+        current epoch. Must be called from on_validation_epoch_end while train
+        buffers are still populated (before on_train_epoch_end clears them).
+
+        No-op during Lightning sanity check or when no training data has been
+        seen this epoch (e.g. trainer.validate() runs).
+        """
+        if getattr(self.trainer, "sanity_checking", False):
+            return
+        if not self.train_survival_risks:
+            return
+
+        loss_name = self.survival_loss_name
+        landmark_bin_idx = (
+            BaseModel._resolve_stratification_landmark_bin(self)
+            if loss_name in ("nll", "deephit")
+            else None
+        )
+
+        def _concat(buffers):
+            return torch.cat(buffers).detach().cpu().numpy() if buffers else None
+
+        train_risks = _concat(self.train_survival_risks)
+        val_risks = _concat(self.val_survival_risks)
+        train_curves = _concat(self.train_survival_curves)
+        val_curves = _concat(self.val_survival_curves)
+        train_times = _concat(self.train_survival_continuous_times)
+        val_times = _concat(self.val_survival_continuous_times)
+        train_events = _concat(self.train_survival_events)
+        val_events = _concat(self.val_survival_events)
+
+        if val_risks is None or val_times is None or val_events is None:
+            return
+
+        train_scores = derive_stratification_scores(
+            loss_name, train_risks, train_curves, landmark_bin_idx,
+        )
+        val_scores = derive_stratification_scores(
+            loss_name, val_risks, val_curves, landmark_bin_idx,
+        )
+
+        if loss_name == "soft_logrank":
+            cutoff = 0.0
+            use_strict_gt = True
+        else:
+            q_lo, q_hi = self.survival_stratification_quantile_range
+            cutoff = max_logrank_cutpoint(
+                train_scores, train_times, train_events, q_lo=q_lo, q_hi=q_hi,
+            )
+            use_strict_gt = False
+
+        cutoff_is_nan = math.isnan(cutoff)
+
+        for split_name, scores, times, events in (
+            ("Train", train_scores, train_times, train_events),
+            ("Val", val_scores, val_times, val_events),
+        ):
+            if cutoff_is_nan:
+                chi2 = float("nan")
+                p_value = float("nan")
+                hr = float("nan")
+            else:
+                group_high = scores > cutoff if use_strict_gt else scores >= cutoff
+                chi2, p_value = compute_logrank_stat(times, events, group_high)
+                hr = compute_hazard_ratio(times, events, group_high)
+            for metric, value in (
+                (f"{split_name}/logrank_chi2", chi2),
+                (f"{split_name}/logrank_p", p_value),
+                (f"{split_name}/hazard_ratio", hr),
+            ):
+                self.log(
+                    metric,
+                    value,
+                    on_step=False,
+                    on_epoch=True,
+                    prog_bar=False,
+                    sync_dist=True,
+                )
+
     def training_step(self, batch, batch_idx):
 
         x, y = batch
@@ -915,6 +1017,7 @@ class BaseModel(L.LightningModule):
     def on_validation_epoch_end(self) -> None:
         if self.task == "Survival":
             self._log_smoothed_survival_loss("val")
+            self._compute_stratification_metrics()
             self._log_survival_metrics("val")
 
         if self.has_metrics and self.metric_computation_mode == "epochwise":
