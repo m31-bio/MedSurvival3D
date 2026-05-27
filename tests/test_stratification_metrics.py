@@ -302,3 +302,123 @@ def test_strat_metrics_skipped_when_train_buffers_empty():
     )
     _invoke(stub)
     assert stub.log.calls == {}
+
+
+def test_strat_metrics_soft_logrank_flag_off_matches_zero_cutoff():
+    """Flag off (default) preserves the existing fixed p_high>0.5 behavior."""
+    rng = np.random.default_rng(0)
+    train_risks = np.concatenate([rng.uniform(-3, -0.5, 20), rng.uniform(0.5, 3, 20)])
+    train_times = np.concatenate([rng.uniform(5, 10, 20), rng.uniform(0.5, 2, 20)])
+    train_events = np.ones(40)
+
+    stub_off = _make_stub_model(
+        "soft_logrank",
+        train_risks=train_risks, val_risks=train_risks,
+        train_times=train_times, val_times=train_times,
+        train_events=train_events, val_events=train_events,
+        soft_logrank_use_max_logrank_cutpoint=False,
+    )
+    _invoke(stub_off)
+
+    # Baseline: compute chi2 directly at cutoff=0 (matches current branch).
+    from inference_survival import compute_logrank_stat
+    group_high = train_risks > 0.0
+    expected_chi2, _ = compute_logrank_stat(train_times, train_events, group_high)
+    assert math.isclose(
+        stub_off.log.calls["Train/logrank_chi2"], expected_chi2, rel_tol=1e-6
+    )
+
+
+def test_strat_metrics_soft_logrank_flag_on_uses_scanned_cutoff():
+    """Flag on switches soft_logrank to max_logrank_cutpoint on the logit."""
+    # Build a fixture where the best cutpoint is clearly NOT at 0:
+    # all logits are positive, so the head's 0.5 boundary would put everyone
+    # in the high group (chi2 ~ 0). The data-driven scan should find a
+    # cutpoint inside (0, max) that separates the two outcome groups.
+    rng = np.random.default_rng(2)
+    low_risk_logits = rng.uniform(0.1, 0.4, 30)   # smaller logits -> longer survival
+    high_risk_logits = rng.uniform(0.6, 1.0, 30)  # larger logits -> shorter survival
+    train_risks = np.concatenate([low_risk_logits, high_risk_logits])
+    train_times = np.concatenate([rng.uniform(5, 10, 30), rng.uniform(0.5, 2, 30)])
+    train_events = np.ones(60)
+
+    stub_off = _make_stub_model(
+        "soft_logrank",
+        train_risks=train_risks, val_risks=train_risks,
+        train_times=train_times, val_times=train_times,
+        train_events=train_events, val_events=train_events,
+        soft_logrank_use_max_logrank_cutpoint=False,
+    )
+    _invoke(stub_off)
+
+    stub_on = _make_stub_model(
+        "soft_logrank",
+        train_risks=train_risks, val_risks=train_risks,
+        train_times=train_times, val_times=train_times,
+        train_events=train_events, val_events=train_events,
+        soft_logrank_use_max_logrank_cutpoint=True,
+    )
+    _invoke(stub_on)
+
+    # Flag-off: everyone above cutoff=0 -> degenerate split -> chi2 is NaN.
+    assert math.isnan(stub_off.log.calls["Train/logrank_chi2"])
+    # Flag-on: scanned cutpoint inside the data range -> large chi2.
+    assert stub_on.log.calls["Train/logrank_chi2"] > 10.0
+
+
+def test_strat_metrics_soft_logrank_flag_on_nan_cutpoint_yields_nan_metrics():
+    """When max_logrank_cutpoint can't find a valid split (e.g. all-same
+    scores or all-censored), the existing cutoff_is_nan guard should still
+    produce NaN metrics."""
+    # All-same logits -> no candidate cutpoint inside (q_lo, q_hi) yields a
+    # non-degenerate split, so max_logrank_cutpoint returns NaN.
+    train_risks = np.zeros(40)
+    train_times = np.linspace(1.0, 10.0, 40)
+    train_events = np.ones(40)
+    stub = _make_stub_model(
+        "soft_logrank",
+        train_risks=train_risks, val_risks=train_risks,
+        train_times=train_times, val_times=train_times,
+        train_events=train_events, val_events=train_events,
+        soft_logrank_use_max_logrank_cutpoint=True,
+    )
+    _invoke(stub)
+    assert math.isnan(stub.log.calls["Train/logrank_chi2"])
+    assert math.isnan(stub.log.calls["Val/logrank_chi2"])
+    assert math.isnan(stub.log.calls["Train/hazard_ratio"])
+
+
+def test_strat_metrics_flag_ignored_for_cox():
+    """Setting the soft_logrank flag has no effect when the loss is cox."""
+    rng = np.random.default_rng(1)
+    train_risks = np.concatenate([rng.uniform(0.0, 0.4, 30), rng.uniform(0.6, 1.0, 30)])
+    train_times = np.concatenate([rng.uniform(5, 10, 30), rng.uniform(0.5, 2, 30)])
+    train_events = np.ones(60)
+
+    stub_off = _make_stub_model(
+        "cox",
+        train_risks=train_risks, val_risks=train_risks,
+        train_times=train_times, val_times=train_times,
+        train_events=train_events, val_events=train_events,
+        soft_logrank_use_max_logrank_cutpoint=False,
+    )
+    stub_on = _make_stub_model(
+        "cox",
+        train_risks=train_risks, val_risks=train_risks,
+        train_times=train_times, val_times=train_times,
+        train_events=train_events, val_events=train_events,
+        soft_logrank_use_max_logrank_cutpoint=True,
+    )
+    _invoke(stub_off)
+    _invoke(stub_on)
+
+    assert math.isclose(
+        stub_off.log.calls["Train/logrank_chi2"],
+        stub_on.log.calls["Train/logrank_chi2"],
+        rel_tol=1e-9,
+    )
+    assert math.isclose(
+        stub_off.log.calls["Train/hazard_ratio"],
+        stub_on.log.calls["Train/hazard_ratio"],
+        rel_tol=1e-9,
+    )

@@ -718,8 +718,16 @@ class BaseModel(L.LightningModule):
         )
 
         if loss_name == "soft_logrank":
-            cutoff = 0.0
-            use_strict_gt = True
+            if self.soft_logrank_use_max_logrank_cutpoint:
+                q_lo, q_hi = self.survival_stratification_quantile_range
+                cutoff = max_logrank_cutpoint(
+                    train_scores, train_times, train_events,
+                    q_lo=q_lo, q_hi=q_hi,
+                )
+                use_strict_gt = False
+            else:
+                cutoff = 0.0
+                use_strict_gt = True
         else:
             q_lo, q_hi = self.survival_stratification_quantile_range
             cutoff = max_logrank_cutpoint(
