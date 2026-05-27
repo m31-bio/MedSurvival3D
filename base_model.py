@@ -39,6 +39,7 @@ _SURVIVAL_LOSS_TAGS = {
     "nll": "NLL",
     "cox": "CoxPH",
     "deephit": "DeepHit",
+    "soft_logrank": "SoftLogRank",
 }
 
 
@@ -402,14 +403,23 @@ class BaseModel(L.LightningModule):
 
         if name == "nll":
             loss = self.criterion(y_hat["logits"], time_bin, event)
+            loss_parts = {"total": loss, name: loss}
         elif name == "cox":
             loss = self.criterion(y_hat["risk"], continuous_time, event)
+            loss_parts = {"total": loss, name: loss}
         elif name == "deephit":
             loss = self.criterion(y_hat["pmf"], time_bin, event)
+            loss_parts = {"total": loss, name: loss}
+        elif name == "soft_logrank":
+            total, components = self.criterion(
+                y_hat["p_high"],
+                continuous_time,
+                event,
+            )
+            loss_parts = {"total": total, name: total, **components}
         else:
             raise ValueError(f"Unexpected survival_loss_name: {name!r}")
 
-        loss_parts = {"total": loss, name: loss}
         return loss_parts, time_bin, event, continuous_time
 
     def _update_survival_metric_buffers(
@@ -420,7 +430,10 @@ class BaseModel(L.LightningModule):
         event,
         continuous_time,
     ):
-        if self.survival_loss_name == "cox":
+        if self.survival_loss_name in ("cox", "soft_logrank"):
+            # Cox: risk = log hazard ratio. soft_logrank: risk = stratification
+            # logit (sigmoid → p_high). Both are monotonic continuous risk
+            # scores suitable for C-index. No calibrated survival curve.
             risk = y_hat["risk"].detach()
             survival = None
         else:
@@ -654,6 +667,25 @@ class BaseModel(L.LightningModule):
                 sync_dist=True,
             )
 
+            if self.survival_loss_name == "soft_logrank":
+                for sub_key in (
+                    "logrank",
+                    "balance",
+                    "p_high_mean",
+                    "p_high_min",
+                    "p_high_max",
+                    "fraction_high_hard",
+                ):
+                    if sub_key in loss_parts:
+                        self.log(
+                            f"Train/SoftLogRank_{sub_key}",
+                            loss_parts[sub_key],
+                            on_step=False,
+                            on_epoch=True,
+                            prog_bar=False,
+                            sync_dist=True,
+                        )
+
             if torch.isnan(y_hat["logits"]).any():
                 print("######################################### Model predicts NaNs!")
 
@@ -785,13 +817,32 @@ class BaseModel(L.LightningModule):
                 sync_dist=True,
             )
 
+            if self.survival_loss_name == "soft_logrank":
+                for sub_key in (
+                    "logrank",
+                    "balance",
+                    "p_high_mean",
+                    "p_high_min",
+                    "p_high_max",
+                    "fraction_high_hard",
+                ):
+                    if sub_key in val_loss_parts:
+                        self.log(
+                            f"Val/SoftLogRank_{sub_key}",
+                            val_loss_parts[sub_key],
+                            on_step=False,
+                            on_epoch=True,
+                            prog_bar=False,
+                            sync_dist=True,
+                        )
+
             if hasattr(self, "val_preds"):
                 actual_batch_size = x.size(0)
                 start_idx = batch_idx * self.trainer.val_dataloaders.batch_size
                 idx = torch.arange(
                     start_idx, start_idx + actual_batch_size, device=self.device
                 )
-                if self.survival_loss_name == "cox":
+                if self.survival_loss_name in ("cox", "soft_logrank"):
                     self.val_preds.update(y_hat["risk"].detach())
                 else:
                     self.val_preds.update(y_hat["survival_time"].detach())
@@ -938,7 +989,26 @@ class BaseModel(L.LightningModule):
                 if self.save_preds:
 
                     if self.task == "Survival":
-                        if self.survival_loss_name == "cox":
+                        if self.survival_loss_name == "soft_logrank":
+                            columns = [
+                                "GT_time_bin",
+                                "GT_event",
+                                "Pred_logit",
+                                "Pred_p_high",
+                                "Pred_group",
+                            ]
+                            data = []
+                            for x, y_val in zip(labels_all, preds_all):
+                                logit = float(y_val.item())
+                                p = 1.0 / (1.0 + math.exp(-logit))
+                                data.append([
+                                    x[0].item(),
+                                    x[1].item(),
+                                    logit,
+                                    p,
+                                    "high" if p >= 0.5 else "low",
+                                ])
+                        elif self.survival_loss_name == "cox":
                             columns = [
                                 "GT_time_bin",
                                 "GT_event",
