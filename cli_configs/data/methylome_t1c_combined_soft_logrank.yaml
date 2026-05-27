@@ -38,15 +38,12 @@ data:
     allow_missing_mask: false
   cv:
     k: 1                      # LOCKED to 1 by forced_overrides: keeps main.py's fold loop to a single pass on fold 0.
-  num_classes: 2
   patch_size: [64, 64, 64]    # Fixed by the preprocessed dataset; not a tunable.
 fixed_survival_time_bins:
   cut_points_years: [1.0, 2.0, 3.0, 5.0]  # Fixed clinical bin edges -> 5 time bins.
   labels: [0-1y, 1-2y, 2-3y, 3-5y, 5y+]
   num_time_bins: 5
 model:
-  task: Survival              # Triggers BaseModel survival branch. Do NOT change.
-  subtask: null
   cifar_size: false
   input_channels: 2           # T1c + brain mask. Tied to data layout.
   input_dim: 3

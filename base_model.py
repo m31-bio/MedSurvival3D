@@ -9,23 +9,8 @@ import wandb
 from madgrad import MADGRAD
 from timm.optim import RMSpropTF
 from torch.optim.lr_scheduler import _LRScheduler
-import torch.nn.functional as F
-from torchmetrics import (
-    AUROC,
-    Accuracy,
-    AveragePrecision,
-    F1Score,
-    MeanAbsoluteError,
-    MeanSquaredError,
-    MetricCollection,
-    Precision,
-    Recall,
-)
+from torchmetrics import MetricCollection
 from torchmetrics.aggregation import CatMetric
-from metrics.balanced_accuracy import BalancedAccuracy
-from augmentation.mixup import mixup_criterion, mixup_data
-from metrics.conf_mat import ConfusionMatrix
-from regularization.sam import SAM
 from survival_utils import (
     _reject_legacy_cox_loss_lambda,
     build_survival_criterion,
@@ -49,29 +34,21 @@ _SURVIVAL_LOSS_TAGS = {
 class BaseModel(L.LightningModule):
     def __init__(
             self,
-            task,
             metric_computation_mode,
             result_plot,
             metrics,
-            num_classes,
             name,
             lr,
             weight_decay,
             optimizer,
             nesterov,
-            sam,
-            adaptive_sam,
             scheduler,
             T_max,
             warmstart,
             epochs,
-            mixup,
-            mixup_alpha,
-            label_smoothing,
             stochastic_depth,
             resnet_dropout,
             squeeze_excitation,
-            apply_shakedrop,
             undecay_norm,
             zero_init_residual,
             input_dim,
@@ -82,114 +59,13 @@ class BaseModel(L.LightningModule):
     ):
         super(BaseModel, self).__init__()
 
-        # Task
-        self.task = task
-
         # Metrics
         self.metric_computation_mode = metric_computation_mode
         self.result_plot_setting = result_plot
-        metrics_dict = {}
-
-        self.subtask = kwargs.get("subtask")
-
-        if self.subtask == "multiclass":
-            metric_task = "multiclass"
-        elif self.subtask == "multilabel":
-            metric_task = "multilabel"
-        else:
-            metric_task = None
-
-        if self.task == "Classification":
-            if metric_task is None:
-                raise ValueError(
-                    "Classification requires subtask to be 'multiclass' or 'multilabel'."
-                )
-            if "acc" in metrics:
-                metrics_dict["Accuracy"] = Accuracy(
-                    task=metric_task,
-                    num_classes=num_classes,
-                    num_labels=num_classes,
-                )
-            if "balanced_acc" in metrics:
-                if "balanced_acc" in metrics:
-                    metrics_dict["Balanced_Accuracy"] = BalancedAccuracy(
-                        task=metric_task,
-                        num_classes=num_classes,
-                    )
-
-            if "f1" in metrics:
-                metrics_dict["F1"] = F1Score(
-                    average="macro",
-                    num_classes=num_classes,
-                    task=metric_task,
-                    num_labels=num_classes,
-                )
-            if "f1_per_class" in metrics:
-                metrics_dict["F1_per_class"] = F1Score(
-                    average=None,
-                    num_classes=num_classes,
-                    task=metric_task,
-                    num_labels=num_classes,
-                )
-            if "pr" in metrics:
-                metrics_dict["Precision"] = Precision(
-                    average="macro",
-                    num_classes=num_classes,
-                    task=metric_task,
-                    num_labels=num_classes,
-                )
-                metrics_dict["Recall"] = Recall(
-                    average="macro",
-                    num_classes=num_classes,
-                    task=metric_task,
-                    num_labels=num_classes,
-                )
-            if "top5acc" in metrics:
-                metrics_dict["Accuracy_top5"] = Accuracy(
-                    task=metric_task,
-                    num_classes=num_classes,
-                    top_k=5,
-                    num_labels=num_classes,
-                )
-            if "auroc" in metrics:
-                metrics_dict["AUROC"] = AUROC(
-                    average="macro",
-                    task=metric_task,
-                    num_classes=num_classes,
-                    num_labels=num_classes,
-                )
-            if "ap" in metrics:
-                metrics_dict["AP"] = AveragePrecision(
-                    task=metric_task,
-                    num_classes=num_classes,
-                    num_labels=num_classes,
-                )
-
-        elif self.task == "Regression":
-            if "mse" in metrics:
-                metrics_dict["MSE"] = MeanSquaredError()
-            if "mae" in metrics:
-                metrics_dict["MAE"] = MeanAbsoluteError()
-        elif self.task == "Survival":
-            if metrics:
-                warnings.warn(
-                    "Configured survival metrics are ignored; loss, C-index, and predictions are logged."
-                )
-        else:
-            raise ValueError(f"Unsupported task: {self.task}")
-
-        if self.result_plot_setting in ["val", "all"]:
-            if self.task == "Classification":
-                self.val_conf_mat = ConfusionMatrix(num_classes=num_classes)
-            elif self.task == "Regression":
-                self.val_pred_list = []
-                self.val_label_list = []
-        if self.result_plot_setting == "all":
-            if self.task == "Classification":
-                self.train_conf_mat = ConfusionMatrix(num_classes=num_classes)
-            elif self.task == "Regression":
-                self.train_pred_list = []
-                self.train_label_list = []
+        if metrics:
+            warnings.warn(
+                "Configured survival metrics are ignored; loss, C-index, and predictions are logged."
+            )
 
         self.save_preds = True if kwargs["save_preds"] else False
         if self.save_preds:
@@ -197,20 +73,18 @@ class BaseModel(L.LightningModule):
             self.val_labels = CatMetric(dist_sync_on_step=False)
             self.val_indices = CatMetric(dist_sync_on_step=False)
 
-        self.has_metrics = len(metrics_dict) > 0
+        self.has_metrics = False
+        metrics_dict = {}
         metrics = MetricCollection(metrics_dict)
         self.train_metrics = metrics.clone(prefix="Train/")
         self.val_metrics = metrics.clone(prefix="Val/")
 
         # Training Args
         self.name = name
-        # self.batch_size = batch_size
         self.lr = lr
         self.weight_decay = weight_decay
         self.optimizer = optimizer
         self.nesterov = nesterov
-        self.sam = sam
-        self.adaptive_sam = adaptive_sam
         self.scheduler = scheduler
         self.T_max = T_max
         self.warmstart = warmstart
@@ -218,18 +92,10 @@ class BaseModel(L.LightningModule):
         self.epochs = epochs
         self.pretrained = pretrained
 
-        # Regularization techniques
-        self.mixup = mixup
-        if self.task == "Survival" and self.mixup:
-            raise ValueError("mixup=True is not supported for Survival tasks.")
-        self.mixup_alpha = mixup_alpha  # 0.2
-        self.label_smoothing = label_smoothing  # 0.1
-        self.stochastic_depth = (
-            stochastic_depth  # 0.1 (with higher resolution maybe 0.2)
-        )
-        self.resnet_dropout = resnet_dropout  # 0.5
+        # Regularization techniques (unused-but-tolerated knobs from upstream)
+        self.stochastic_depth = stochastic_depth
+        self.resnet_dropout = resnet_dropout
         self.se = squeeze_excitation
-        self.apply_shakedrop = apply_shakedrop
         self.undecay_norm = undecay_norm
         self.zero_init_residual = zero_init_residual
 
@@ -239,126 +105,116 @@ class BaseModel(L.LightningModule):
         # Data and Dataloading
         self.input_dim = input_dim
         self.input_channels = input_channels
-        self.num_classes = num_classes
-
-        # switch to manual optimization for Sharpness Aware Minimization
-        if self.sam:
-            self.automatic_optimization = False
 
         # Loss
-        if self.task == "Classification":
-            if self.subtask == "multiclass":
-                self.criterion = nn.CrossEntropyLoss(
-                    label_smoothing=self.label_smoothing
-                )
-            elif self.subtask == "multilabel":
-                self.criterion = nn.BCEWithLogitsLoss()
-        elif self.task == "Regression":
-            self.criterion = nn.MSELoss()
-        elif self.task == "Survival":
-            _reject_legacy_cox_loss_lambda(kwargs)
+        _reject_legacy_cox_loss_lambda(kwargs)
 
-            self.num_time_bins = int(kwargs.get("num_time_bins", num_classes))
+        if "num_time_bins" not in kwargs:
+            raise ValueError(
+                "Survival training requires `num_time_bins` to be provided "
+                "via model config."
+            )
+        self.num_time_bins = int(kwargs["num_time_bins"])
 
-            survival_loss_cfg = kwargs.get("survival_loss")
-            if survival_loss_cfg is None:
-                survival_loss_cfg = {"name": "nll"}
-            self.survival_loss_name, self.criterion = build_survival_criterion(
-                survival_loss_cfg, num_time_bins=self.num_time_bins,
-            )
+        survival_loss_cfg = kwargs.get("survival_loss")
+        if survival_loss_cfg is None:
+            survival_loss_cfg = {"name": "nll"}
+        self.survival_loss_name, self.criterion = build_survival_criterion(
+            survival_loss_cfg, num_time_bins=self.num_time_bins,
+        )
 
-            default_cut_points_years = (
-                [1.0, 2.0, 3.0, 5.0]
-                if self.num_time_bins == 5
-                else [float(i) for i in range(1, self.num_time_bins)]
+        default_cut_points_years = (
+            [1.0, 2.0, 3.0, 5.0]
+            if self.num_time_bins == 5
+            else [float(i) for i in range(1, self.num_time_bins)]
+        )
+        cut_points_years = self._survival_year_values(
+            kwargs.get("survival_cut_points_years"),
+            kwargs.get("survival_cut_points_months"),
+            default=default_cut_points_years,
+        )
+        if len(cut_points_years) != self.num_time_bins - 1:
+            raise ValueError(
+                "survival_cut_points_years must contain num_time_bins - 1 "
+                f"values. Got {len(cut_points_years)} cut points for "
+                f"{self.num_time_bins} bins."
             )
-            cut_points_years = self._survival_year_values(
-                kwargs.get("survival_cut_points_years"),
-                kwargs.get("survival_cut_points_months"),
-                default=default_cut_points_years,
-            )
-            if len(cut_points_years) != self.num_time_bins - 1:
+        landmark_years = self._survival_year_values(
+            kwargs.get("survival_landmark_years"),
+            None,
+            default=cut_points_years,
+        )
+        self.register_buffer(
+            "survival_cut_points_years",
+            torch.tensor(cut_points_years, dtype=torch.float32),
+            persistent=False,
+        )
+        self.register_buffer(
+            "survival_landmark_years",
+            torch.tensor(landmark_years, dtype=torch.float32),
+            persistent=False,
+        )
+        self.survival_landmark_labels = [
+            self._format_survival_landmark_label(value)
+            for value in landmark_years
+        ]
+        landmark_year_cfg = kwargs.get("survival_stratification_landmark_year", 5.0)
+        if isinstance(landmark_year_cfg, (list, tuple)):
+            if not landmark_year_cfg:
                 raise ValueError(
-                    "survival_cut_points_years must contain num_time_bins - 1 "
-                    f"values. Got {len(cut_points_years)} cut points for "
-                    f"{self.num_time_bins} bins."
+                    "survival_stratification_landmark_year must not be empty"
                 )
-            landmark_years = self._survival_year_values(
-                kwargs.get("survival_landmark_years"),
-                None,
-                default=cut_points_years,
+            print(
+                "Warning: survival_stratification_landmark_year given as list; "
+                f"using first value {landmark_year_cfg[0]}"
             )
-            self.register_buffer(
-                "survival_cut_points_years",
-                torch.tensor(cut_points_years, dtype=torch.float32),
-                persistent=False,
-            )
-            self.register_buffer(
-                "survival_landmark_years",
-                torch.tensor(landmark_years, dtype=torch.float32),
-                persistent=False,
-            )
-            self.survival_landmark_labels = [
-                self._format_survival_landmark_label(value)
-                for value in landmark_years
-            ]
-            landmark_year_cfg = kwargs.get("survival_stratification_landmark_year", 5.0)
-            if isinstance(landmark_year_cfg, (list, tuple)):
-                if not landmark_year_cfg:
-                    raise ValueError(
-                        "survival_stratification_landmark_year must not be empty"
-                    )
-                print(
-                    "Warning: survival_stratification_landmark_year given as list; "
-                    f"using first value {landmark_year_cfg[0]}"
-                )
-                landmark_year_cfg = landmark_year_cfg[0]
-            self.survival_stratification_landmark_year = float(landmark_year_cfg)
+            landmark_year_cfg = landmark_year_cfg[0]
+        self.survival_stratification_landmark_year = float(landmark_year_cfg)
 
-            q_range_cfg = kwargs.get(
-                "survival_stratification_quantile_range",
-                (0.2, 0.8),
+        q_range_cfg = kwargs.get(
+            "survival_stratification_quantile_range",
+            (0.2, 0.8),
+        )
+        q_lo, q_hi = float(q_range_cfg[0]), float(q_range_cfg[1])
+        if not (0.0 < q_lo < q_hi < 1.0):
+            raise ValueError(
+                "survival_stratification_quantile_range must satisfy "
+                f"0 < q_lo < q_hi < 1; got ({q_lo}, {q_hi})"
             )
-            q_lo, q_hi = float(q_range_cfg[0]), float(q_range_cfg[1])
-            if not (0.0 < q_lo < q_hi < 1.0):
-                raise ValueError(
-                    "survival_stratification_quantile_range must satisfy "
-                    f"0 < q_lo < q_hi < 1; got ({q_lo}, {q_hi})"
-                )
-            self.survival_stratification_quantile_range = (q_lo, q_hi)
-            self.soft_logrank_use_max_logrank_cutpoint = bool(kwargs.get(
-                "soft_logrank_use_max_logrank_cutpoint", False
-            ))
+        self.survival_stratification_quantile_range = (q_lo, q_hi)
+        self.soft_logrank_use_max_logrank_cutpoint = bool(kwargs.get(
+            "soft_logrank_use_max_logrank_cutpoint", False
+        ))
 
-            self._stratification_landmark_bin_warned = False
-            self.train_survival_risks = []
-            self.train_survival_curves = []
-            self.train_survival_time_bins = []
-            self.train_survival_continuous_times = []
-            self.train_survival_events = []
-            self.val_survival_risks = []
-            self.val_survival_curves = []
-            self.val_survival_time_bins = []
-            self.val_survival_continuous_times = []
-            self.val_survival_events = []
-            self.survival_smoothing_alpha = float(
-                kwargs.get(
-                    "survival_smoothing_alpha",
-                    kwargs.get("survival_ema_alpha", 0.05),
-                )
+        self._stratification_landmark_bin_warned = False
+        self.train_survival_risks = []
+        self.train_survival_curves = []
+        self.train_survival_time_bins = []
+        self.train_survival_continuous_times = []
+        self.train_survival_events = []
+        self.val_survival_risks = []
+        self.val_survival_curves = []
+        self.val_survival_time_bins = []
+        self.val_survival_continuous_times = []
+        self.val_survival_events = []
+        self.survival_smoothing_alpha = float(
+            kwargs.get(
+                "survival_smoothing_alpha",
+                kwargs.get("survival_ema_alpha", 0.05),
             )
-            self.survival_smoothing_alpha = min(
-                max(self.survival_smoothing_alpha, 0.0),
-                1.0,
-            )
-            self.survival_metric_ema = {
-                "Train/loss": None,
-                "Val/loss": None,
-                "Train/C-index": None,
-                "Val/C-index": None,
-            }
-            self.train_survival_losses = []
-            self.val_survival_losses = []
+        )
+        self.survival_smoothing_alpha = min(
+            max(self.survival_smoothing_alpha, 0.0),
+            1.0,
+        )
+        self.survival_metric_ema = {
+            "Train/loss": None,
+            "Val/loss": None,
+            "Train/C-index": None,
+            "Val/C-index": None,
+        }
+        self.train_survival_losses = []
+        self.val_survival_losses = []
 
     def forward(self, x):
         pass
@@ -767,107 +623,22 @@ class BaseModel(L.LightningModule):
     def training_step(self, batch, batch_idx):
 
         x, y = batch
+        y_hat = self(x)
 
-        if self.task == "Survival":
-            y_hat = self(x)
+        loss_parts, time_bin, event, continuous_time = self._survival_loss(
+            y_hat,
+            y,
+        )
+        loss = loss_parts["total"]
 
-            if self.sam:
-                opt = self.optimizers()
-                loss_parts, time_bin, event, continuous_time = self._survival_loss(
-                    y_hat,
-                    y,
-                )
-                loss = loss_parts["total"]
-                self.manual_backward(loss)
-                opt.first_step(zero_grad=True)
-
-                second_loss_parts, _, _, _ = self._survival_loss(self(x), y)
-                second_loss = second_loss_parts["total"]
-                self.manual_backward(second_loss)
-                opt.second_step(zero_grad=True)
-            else:
-                loss_parts, time_bin, event, continuous_time = self._survival_loss(
-                    y_hat,
-                    y,
-                )
-                loss = loss_parts["total"]
-
-            self._update_survival_metric_buffers(
-                "train",
-                y_hat,
-                time_bin,
-                event,
-                continuous_time,
-            )
-            self.train_survival_losses.append(loss.detach())
-
-            self.log(
-                "Train/loss",
-                loss,
-                on_step=False,
-                on_epoch=True,
-                prog_bar=True,
-                sync_dist=True,
-            )
-            self.log(
-                f"Train/{_SURVIVAL_LOSS_TAGS[self.survival_loss_name]}Loss",
-                loss_parts[self.survival_loss_name],
-                on_step=False,
-                on_epoch=True,
-                prog_bar=False,
-                sync_dist=True,
-            )
-
-            if torch.isnan(y_hat["logits"]).any():
-                print("######################################### Model predicts NaNs!")
-
-            return loss
-
-        if self.mixup:
-            inputs, targets_a, targets_b, lam = mixup_data(x, y, alpha=self.mixup_alpha)
-            y_hat = self(inputs)
-
-        else:
-            y_hat = self(x)
-            if self.num_classes == 1:
-                y_hat = y_hat.view(-1)
-
-        if x.shape[0] == 1 and len(y_hat.shape) == 1:
-            # for cases where batch size is 1 and y_hat doesn't have a batch dim
-            y_hat = y_hat.unsqueeze(0)
-
-        if self.sam:
-            opt = self.optimizers()
-
-            # first forward-backward pass
-            if self.mixup:
-                loss = mixup_criterion(self.criterion, y_hat, targets_a, targets_b, lam)
-            else:
-                loss = self.criterion(y_hat, y)
-            self.manual_backward(loss)
-            opt.first_step(zero_grad=True)
-
-            # second forward-backward pass
-            if self.mixup:
-                self.manual_backward(
-                    mixup_criterion(
-                        self.criterion, self(inputs), targets_a, targets_b, lam
-                    )
-                )
-            else:
-                if self.num_classes == 1:
-                    self.manual_backward(self.criterion(self(x).view(-1), y))
-                else:
-                    self.manual_backward(self.criterion(self(x), y))
-            opt.second_step(zero_grad=True)
-
-        else:
-            if self.mixup:
-                loss = mixup_criterion(self.criterion, y_hat, targets_a, targets_b, lam)
-            else:
-                loss = self.criterion(
-                    y_hat, y.float() if self.subtask == "multilabel" else y
-                )
+        self._update_survival_metric_buffers(
+            "train",
+            y_hat,
+            time_bin,
+            event,
+            continuous_time,
+        )
+        self.train_survival_losses.append(loss.detach())
 
         self.log(
             "Train/loss",
@@ -877,40 +648,17 @@ class BaseModel(L.LightningModule):
             prog_bar=True,
             sync_dist=True,
         )
+        self.log(
+            f"Train/{_SURVIVAL_LOSS_TAGS[self.survival_loss_name]}Loss",
+            loss_parts[self.survival_loss_name],
+            on_step=False,
+            on_epoch=True,
+            prog_bar=False,
+            sync_dist=True,
+        )
 
-        if torch.isnan(y_hat).any():
+        if torch.isnan(y_hat["logits"]).any():
             print("######################################### Model predicts NaNs!")
-
-        # save metrics
-        if self.has_metrics and self.metric_computation_mode == "stepwise":
-            metrics_res = self.train_metrics(y_hat, y)
-            if "Train/F1_per_class" in metrics_res.keys():
-                for i, value in enumerate(metrics_res["Train/F1_per_class"]):
-                    metrics_res["Train/F1_class_{}".format(i)] = (
-                        value if not torch.isnan(value) else 0.0
-                    )
-                del metrics_res["Train/F1_per_class"]
-            self.log_dict(
-                metrics_res,
-                on_step=False,
-                on_epoch=True,
-                prog_bar=True,
-                sync_dist=True,
-            )
-        elif self.has_metrics and self.metric_computation_mode == "epochwise":
-            if self.task == "Classification":
-                if self.subtask == "multilabel":
-                    self.train_metrics.update(torch.sigmoid(y_hat.detach()), y)
-                elif self.subtask == "multiclass":
-                    self.train_metrics.update(F.softmax(y_hat.detach(), dim=-1), y)
-            else:
-                self.train_metrics.update(y_hat.detach(), y)
-
-        if hasattr(self, "train_conf_mat"):
-            self.train_conf_mat.update(y_hat, y)
-        if hasattr(self, "train_pred_list"):
-            self.train_pred_list.extend(y_hat)
-            self.train_label_list.extend(y)
 
         return loss
 
@@ -918,124 +666,60 @@ class BaseModel(L.LightningModule):
         x, y = batch
         y_hat = self(x)
 
-        if self.task == "Survival":
-            val_loss_parts, time_bin, event, continuous_time = self._survival_loss(
-                y_hat,
-                y,
-            )
-            val_loss = val_loss_parts["total"]
-            self._update_survival_metric_buffers(
-                "val",
-                y_hat,
-                time_bin,
-                event,
-                continuous_time,
-            )
-            self.val_survival_losses.append(val_loss.detach())
-            self.log(
-                "Val/loss",
-                val_loss,
-                on_step=False,
-                on_epoch=True,
-                prog_bar=True,
-                sync_dist=True,
-            )
-            self.log(
-                f"Val/{_SURVIVAL_LOSS_TAGS[self.survival_loss_name]}Loss",
-                val_loss_parts[self.survival_loss_name],
-                on_step=False,
-                on_epoch=True,
-                prog_bar=False,
-                sync_dist=True,
-            )
-
-            if hasattr(self, "val_preds"):
-                actual_batch_size = x.size(0)
-                start_idx = batch_idx * self.trainer.val_dataloaders.batch_size
-                idx = torch.arange(
-                    start_idx, start_idx + actual_batch_size, device=self.device
-                )
-                if self.survival_loss_name in ("cox", "soft_logrank"):
-                    self.val_preds.update(y_hat["risk"].detach())
-                else:
-                    self.val_preds.update(y_hat["survival_time"].detach())
-                self.val_labels.update(
-                    self._survival_label_tensor(time_bin, event).detach()
-                )
-                self.val_indices.update(idx)
-
-            return val_loss
-
-        if self.num_classes == 1:
-            y_hat = y_hat.view(-1)
-
-        val_loss = self.criterion(
-            y_hat, y.float() if self.subtask == "multilabel" else y
+        val_loss_parts, time_bin, event, continuous_time = self._survival_loss(
+            y_hat,
+            y,
         )
+        val_loss = val_loss_parts["total"]
+        self._update_survival_metric_buffers(
+            "val",
+            y_hat,
+            time_bin,
+            event,
+            continuous_time,
+        )
+        self.val_survival_losses.append(val_loss.detach())
         self.log(
             "Val/loss",
             val_loss,
             on_step=False,
             on_epoch=True,
             prog_bar=True,
-            sync_dist=True,  # True if self.trainer.num_devices > 1 else False,
+            sync_dist=True,
+        )
+        self.log(
+            f"Val/{_SURVIVAL_LOSS_TAGS[self.survival_loss_name]}Loss",
+            val_loss_parts[self.survival_loss_name],
+            on_step=False,
+            on_epoch=True,
+            prog_bar=False,
+            sync_dist=True,
         )
 
-        # save metrics
-        if self.has_metrics and self.metric_computation_mode == "stepwise":
-            metrics_res = self.val_metrics(y_hat, y)
-            if "Val/F1_per_class" in metrics_res.keys():
-                for i, value in enumerate(metrics_res["Val/F1_per_class"]):
-                    metrics_res["Val/F1_class_{}".format(i)] = (
-                        value if not torch.isnan(value) else 0.0
-                    )
-                del metrics_res["Val/F1_per_class"]
-            self.log_dict(
-                metrics_res,
-                on_step=False,
-                on_epoch=True,
-                prog_bar=True,
-                sync_dist=True,  # True if self.trainer.num_devices > 1 else False,
-            )
-        elif self.has_metrics and self.metric_computation_mode == "epochwise":
-            if self.task == "Classification":
-                if self.subtask == "multilabel":
-                    self.val_metrics.update(torch.sigmoid(y_hat.detach()), y)
-                elif self.subtask == "multiclass":
-                    self.val_metrics.update(F.softmax(y_hat.detach(), dim=-1), y)
-            else:
-                self.val_metrics.update(y_hat.detach(), y)
-
-
-        if hasattr(self, "val_conf_mat"):
-            self.val_conf_mat.update(y_hat, y)
         if hasattr(self, "val_preds"):
-            """self.val_pred_list.extend(y_hat.detach().cpu())
-            self.val_label_list.extend(y.detach().cpu())"""
-            actual_batch_size = x.size(0)  # dynamic size (works for last batch)
+            actual_batch_size = x.size(0)
             start_idx = batch_idx * self.trainer.val_dataloaders.batch_size
             idx = torch.arange(
                 start_idx, start_idx + actual_batch_size, device=self.device
             )
-
-            self.val_preds.update(y_hat.detach())
-            self.val_labels.update(y.detach())
+            if self.survival_loss_name in ("cox", "soft_logrank"):
+                self.val_preds.update(y_hat["risk"].detach())
+            else:
+                self.val_preds.update(y_hat["survival_time"].detach())
+            self.val_labels.update(
+                self._survival_label_tensor(time_bin, event).detach()
+            )
             self.val_indices.update(idx)
+
+        return val_loss
 
     def predict_step(self, batch, batch_idx):
 
         x, y = batch
         y_hat = self(x)
 
-        if self.task == "Survival":
-            time_bin, event, _ = self._unpack_survival_targets(y)
-            return self._survival_label_tensor(time_bin, event), y_hat
-
-        if self.num_classes == 1:
-            y_hat = y_hat.view(-1)
-
-        # self.predictions.append(y_hat)
-        return y, y_hat
+        time_bin, event, _ = self._unpack_survival_targets(y)
+        return self._survival_label_tensor(time_bin, event), y_hat
 
     def on_save_checkpoint(self, checkpoint) -> None:
         cutpoint = getattr(self, "_stratification_cutpoint", None)
@@ -1043,182 +727,70 @@ class BaseModel(L.LightningModule):
             checkpoint["stratification_cutpoint"] = cutpoint
 
     def on_validation_epoch_end(self) -> None:
-        if self.task == "Survival":
-            self._log_smoothed_survival_loss("val")
-            self._compute_stratification_metrics()
-            self._log_survival_metrics("val")
+        self._log_smoothed_survival_loss("val")
+        self._compute_stratification_metrics()
+        self._log_survival_metrics("val")
 
-        if self.has_metrics and self.metric_computation_mode == "epochwise":
-            metrics_res = self.val_metrics.compute()
-            if "Val/F1_per_class" in metrics_res.keys():
-                for i, value in enumerate(metrics_res["Val/F1_per_class"]):
-                    metrics_res["Val/F1_class_{}".format(i)] = (
-                        value if not torch.isnan(value) else 0.0
-                    )
-                del metrics_res["Val/F1_per_class"]
-            self.log_dict(
-                metrics_res,
-                on_step=False,
-                on_epoch=True,
-                prog_bar=True,
-                sync_dist=True,  # True if self.trainer.num_devices > 1 else False,
-            )
-
-            self.val_metrics.reset()
-
-        if hasattr(self, "val_conf_mat"):
-            self.val_conf_mat.save_state(self, "val")
-            self.val_conf_mat.reset()
         if hasattr(self, "val_preds"):
-            """# Stack tensors along batch dim
-            val_preds = torch.stack(self.val_pred_list, dim=0).to(self.device)
-            val_labels = torch.stack(self.val_label_list, dim=0).to(self.device)
-            # print(len(self.val_pred_list), val_preds.shape)
-            # Gather from all GPUs
-            preds_all = self.all_gather(val_preds)
-            preds_all = preds_all.view(-1, *preds_all.shape[2:])
-            labels_all = self.all_gather(val_labels)
-            labels_all = labels_all.view(-1, *labels_all.shape[2:])
-            # print(preds_all.shape)"""
-
             preds_all = self.val_preds.compute()  # shape: [N_total, C]
             labels_all = self.val_labels.compute()
             indices = self.val_indices.compute()
 
-            if self.trainer.is_global_zero:
-                # Sort by original index to preserve dataset order
+            if self.trainer.is_global_zero and self.save_preds:
                 sorted_idx = torch.argsort(indices)
                 preds_all = preds_all[sorted_idx]
                 labels_all = labels_all[sorted_idx]
-                if self.task == "Regression":
-                    data = [[x, y] for (x, y) in zip(labels_all, preds_all)]
-                    table = wandb.Table(
-                        data=data, columns=["Ground Truth", "Prediction"]
-                    )
-                    wandb.log(
-                        {
-                            "Val Scatterplot": wandb.plot.scatter(
-                                table,
-                                "Ground Truth",
-                                "Prediction",
-                                "Validation Scatterplot",
-                            )
-                        }
-                    )
-                if self.save_preds:
 
-                    if self.task == "Survival":
-                        if self.survival_loss_name == "soft_logrank":
-                            columns = [
-                                "GT_time_bin",
-                                "GT_event",
-                                "Pred_logit",
-                                "Pred_p_high",
-                                "Pred_group",
-                            ]
-                            data = []
-                            for x, y_val in zip(labels_all, preds_all):
-                                logit = float(y_val.item())
-                                p = 1.0 / (1.0 + math.exp(-logit))
-                                data.append([
-                                    x[0].item(),
-                                    x[1].item(),
-                                    logit,
-                                    p,
-                                    "high" if p >= 0.5 else "low",
-                                ])
-                        elif self.survival_loss_name == "cox":
-                            columns = [
-                                "GT_time_bin",
-                                "GT_event",
-                                "Pred_risk",
-                            ]
-                            data = [
-                                [x[0].item(), x[1].item(), y.item()]
-                                for x, y in zip(labels_all, preds_all)
-                            ]
-                        else:
-                            columns = [
-                                "GT_time_bin",
-                                "GT_event",
-                                "Pred_survival_time",
-                                "Pred_risk",
-                            ]
-                            data = [
-                                [x[0].item(), x[1].item(), y.item(), -y.item()]
-                                for x, y in zip(labels_all, preds_all)
-                            ]
-                        table = wandb.Table(data=data, columns=columns)
-                        wandb.log({"Val Predictions": table})
-                    elif self.task == "Classification":
-                        columns = (
-                                      (["GT_" + str(i) for i in range(len(labels_all[0]))])
-                                      if self.subtask == "multilabel"
-                                      else ["GT"]
-                                  ) + ["Pred_" + str(i) for i in range(len(preds_all[0]))]
-                        data = [
-                            (
-                                    (x.tolist() if self.subtask == "multilabel" else [x])
-                                    + (
-                                        F.softmax(y, dim=-1)
-                                        if self.subtask == "multiclass"
-                                        else torch.sigmoid(y)
-                                    ).tolist()
-                            )
-                            for x, y in zip(labels_all, preds_all)
-                        ]
-                        table = wandb.Table(data=data, columns=columns)
-                        wandb.log({"Val Predictions": table})
-                    else:
-                        raise NotImplementedError
+                if self.survival_loss_name == "soft_logrank":
+                    columns = [
+                        "GT_time_bin",
+                        "GT_event",
+                        "Pred_logit",
+                        "Pred_p_high",
+                        "Pred_group",
+                    ]
+                    data = []
+                    for x, y_val in zip(labels_all, preds_all):
+                        logit = float(y_val.item())
+                        p = 1.0 / (1.0 + math.exp(-logit))
+                        data.append([
+                            x[0].item(),
+                            x[1].item(),
+                            logit,
+                            p,
+                            "high" if p >= 0.5 else "low",
+                        ])
+                elif self.survival_loss_name == "cox":
+                    columns = [
+                        "GT_time_bin",
+                        "GT_event",
+                        "Pred_risk",
+                    ]
+                    data = [
+                        [x[0].item(), x[1].item(), y.item()]
+                        for x, y in zip(labels_all, preds_all)
+                    ]
+                else:
+                    columns = [
+                        "GT_time_bin",
+                        "GT_event",
+                        "Pred_survival_time",
+                        "Pred_risk",
+                    ]
+                    data = [
+                        [x[0].item(), x[1].item(), y.item(), -y.item()]
+                        for x, y in zip(labels_all, preds_all)
+                    ]
+                table = wandb.Table(data=data, columns=columns)
+                wandb.log({"Val Predictions": table})
 
-            # reset
             self.val_preds.reset()
             self.val_labels.reset()
             self.val_indices.reset()
 
     def on_train_epoch_end(self) -> None:
-        if self.task == "Survival":
-            self._log_smoothed_survival_loss("train")
-            self._log_survival_metrics("train")
-
-        if self.has_metrics and self.metric_computation_mode == "epochwise":
-            metrics_res = self.train_metrics.compute()
-            if "Train/F1_per_class" in metrics_res.keys():
-                for i, value in enumerate(metrics_res["Train/F1_per_class"]):
-                    metrics_res["Train/F1_class_{}".format(i)] = (
-                        value if not torch.isnan(value) else 0.0
-                    )
-                del metrics_res["Train/F1_per_class"]
-
-            self.log_dict(
-                metrics_res,
-                on_step=False,
-                on_epoch=True,
-                prog_bar=True,
-                sync_dist=True,  # True if self.trainer.num_devices > 1 else False,
-            )
-
-            self.train_metrics.reset()
-
-        if hasattr(self, "train_conf_mat"):
-            self.train_conf_mat.save_state(self, "train")
-            self.train_conf_mat.reset()
-        if hasattr(self, "train_pred_list"):
-            data = [
-                [x, y] for (x, y) in zip(self.train_label_list, self.train_pred_list)
-            ]
-            table = wandb.Table(data=data, columns=["Ground Truth", "Prediction"])
-            wandb.log(
-                {
-                    "Train Scatterplot": wandb.plot.scatter(
-                        table, "Ground Truth", "Prediction", "Train Scatterplot"
-                    )
-                }
-            )
-            # reset
-            self.train_pred_list = []
-            self.train_label_list = []
+        self._log_smoothed_survival_loss("train")
+        self._log_survival_metrics("train")
 
     def on_train_start(self):
         # from models.preact_resnet import PreActBlock, PreActBottleneck
@@ -1303,192 +875,133 @@ class BaseModel(L.LightningModule):
                 elif "cls_head" in name or "survival_head" in name:
                     head_params.append(param)
 
-        if not self.sam:
-            if self.optimizer == "SGD":
-                if self.finetuning_method == "full_sawtooth":
-                    optimizer = torch.optim.SGD(
-                        [
-                            {
-                                "params": head_params,
-                                "lr": self.lr,
-                                "momentum": 0.9,
-                                "weight_decay": self.weight_decay,
-                                "nesterov": self.nesterov,
-                                "name": "cls_head",
-                            },
-                            {
-                                "params": encoder_params,
-                                "lr": self.lr,
-                                "momentum": 0.9,
-                                "weight_decay": self.weight_decay,
-                                "nesterov": self.nesterov,
-                                "name": "encoder",
-                            },
-                        ]
-                    )
+        if self.optimizer == "SGD":
+            if self.finetuning_method == "full_sawtooth":
+                optimizer = torch.optim.SGD(
+                    [
+                        {
+                            "params": head_params,
+                            "lr": self.lr,
+                            "momentum": 0.9,
+                            "weight_decay": self.weight_decay,
+                            "nesterov": self.nesterov,
+                            "name": "cls_head",
+                        },
+                        {
+                            "params": encoder_params,
+                            "lr": self.lr,
+                            "momentum": 0.9,
+                            "weight_decay": self.weight_decay,
+                            "nesterov": self.nesterov,
+                            "name": "encoder",
+                        },
+                    ]
+                )
 
-                else:
-                    optimizer = torch.optim.SGD(
-                        params,
-                        lr=self.lr,
-                        momentum=0.9,
-                        weight_decay=self.weight_decay,
-                        nesterov=self.nesterov,
-                    )
-            elif self.optimizer == "Adam":
-                if self.finetuning_method == "full_sawtooth":
-                    optimizer = torch.optim.Adam(
-                        [
-                            {
-                                "params": head_params,
-                                "lr": self.lr,
-                                "weight_decay": self.weight_decay,
-                                "name": "cls_head",
-                            },
-                            {
-                                "params": encoder_params,
-                                "lr": self.lr,
-                                "weight_decay": self.weight_decay,
-                                "name": "encoder",
-                            },
-                        ]
-                    )
-
-                else:
-                    optimizer = torch.optim.Adam(
-                        params, lr=self.lr, weight_decay=self.weight_decay
-                    )
-            elif self.optimizer == "AdamW":
-
-                if self.finetuning_method == "full_sawtooth":
-                    optimizer = torch.optim.AdamW(
-                        [
-                            {
-                                "params": head_params,
-                                "lr": self.lr,
-                                "weight_decay": self.weight_decay,
-                                "name": "cls_head",
-                            },
-                            {
-                                "params": encoder_params,
-                                "lr": self.lr,
-                                "weight_decay": self.weight_decay,
-                                "name": "encoder",
-                            },
-                        ]
-                    )
-
-                else:
-                    optimizer = torch.optim.AdamW(
-                        params, lr=self.lr, weight_decay=self.weight_decay
-                    )
-            elif self.optimizer == "Rmsprop":
-
-                if self.finetuning_method == "full_sawtooth":
-                    optimizer = RMSpropTF(
-                        [
-                            {
-                                "params": head_params,
-                                "lr": self.lr,
-                                "weight_decay": self.weight_decay,
-                                "name": "cls_head",
-                            },
-                            {
-                                "params": encoder_params,
-                                "lr": self.lr,
-                                "weight_decay": self.weight_decay,
-                                "name": "encoder",
-                            },
-                        ]
-                    )
-
-                else:
-                    optimizer = RMSpropTF(
-                        params, lr=self.lr, weight_decay=self.weight_decay
-                    )
-            elif self.optimizer == "Madgrad":
-
-                if self.finetuning_method == "full_sawtooth":
-                    optimizer = MADGRAD(
-                        [
-                            {
-                                "params": head_params,
-                                "lr": self.lr,
-                                "momentum": 0.9,
-                                "weight_decay": self.weight_decay,
-                                "name": "cls_head",
-                            },
-                            {
-                                "params": encoder_params,
-                                "lr": self.lr,
-                                "momentum": 0.9,
-                                "weight_decay": self.weight_decay,
-                                "name": "encoder",
-                            },
-                        ]
-                    )
-
-                else:
-                    optimizer = MADGRAD(
-                        params, lr=self.lr, momentum=0.9, weight_decay=self.weight_decay
-                    )
-
-        else:
-            # ASAM paper suggests 10x larger rho for adaptive SAM than in normal SAM
-            rho = 0.5 if self.adaptive_sam else 0.05
-
-            if self.optimizer == "SGD":
-                base_optimizer = torch.optim.SGD
-                optimizer = SAM(
+            else:
+                optimizer = torch.optim.SGD(
                     params,
-                    base_optimizer,
-                    adaptive=self.adaptive_sam,
                     lr=self.lr,
                     momentum=0.9,
                     weight_decay=self.weight_decay,
                     nesterov=self.nesterov,
-                    rho=rho,
                 )
-            elif self.optimizer == "Madgrad":
-                base_optimizer = MADGRAD
-                optimizer = SAM(
-                    params,
-                    base_optimizer,
-                    adaptive=self.adaptive_sam,
-                    lr=self.lr,
-                    momentum=0.9,
-                    weight_decay=self.weight_decay,
-                    rho=rho,
+        elif self.optimizer == "Adam":
+            if self.finetuning_method == "full_sawtooth":
+                optimizer = torch.optim.Adam(
+                    [
+                        {
+                            "params": head_params,
+                            "lr": self.lr,
+                            "weight_decay": self.weight_decay,
+                            "name": "cls_head",
+                        },
+                        {
+                            "params": encoder_params,
+                            "lr": self.lr,
+                            "weight_decay": self.weight_decay,
+                            "name": "encoder",
+                        },
+                    ]
                 )
-            elif self.optimizer == "Adam":
-                base_optimizer = torch.optim.Adam
-                optimizer = SAM(
-                    params,
-                    base_optimizer,
-                    adaptive=self.adaptive_sam,
-                    lr=self.lr,
-                    weight_decay=self.weight_decay,
-                    rho=rho,
+
+            else:
+                optimizer = torch.optim.Adam(
+                    params, lr=self.lr, weight_decay=self.weight_decay
                 )
-            elif self.optimizer == "AdamW":
-                base_optimizer = torch.optim.AdamW
-                optimizer = SAM(
-                    params,
-                    base_optimizer,
-                    adaptive=self.adaptive_sam,
-                    lr=self.lr,
-                    weight_decay=self.weight_decay,
-                    rho=rho,
+        elif self.optimizer == "AdamW":
+
+            if self.finetuning_method == "full_sawtooth":
+                optimizer = torch.optim.AdamW(
+                    [
+                        {
+                            "params": head_params,
+                            "lr": self.lr,
+                            "weight_decay": self.weight_decay,
+                            "name": "cls_head",
+                        },
+                        {
+                            "params": encoder_params,
+                            "lr": self.lr,
+                            "weight_decay": self.weight_decay,
+                            "name": "encoder",
+                        },
+                    ]
                 )
-            elif self.optimizer == "Rmsprop":
-                base_optimizer = RMSpropTF
-                optimizer = SAM(
-                    params,
-                    base_optimizer,
-                    adaptive=self.adaptive_sam,
-                    lr=self.lr,
-                    weight_decay=self.weight_decay,
-                    rho=rho,
+
+            else:
+                optimizer = torch.optim.AdamW(
+                    params, lr=self.lr, weight_decay=self.weight_decay
+                )
+        elif self.optimizer == "Rmsprop":
+
+            if self.finetuning_method == "full_sawtooth":
+                optimizer = RMSpropTF(
+                    [
+                        {
+                            "params": head_params,
+                            "lr": self.lr,
+                            "weight_decay": self.weight_decay,
+                            "name": "cls_head",
+                        },
+                        {
+                            "params": encoder_params,
+                            "lr": self.lr,
+                            "weight_decay": self.weight_decay,
+                            "name": "encoder",
+                        },
+                    ]
+                )
+
+            else:
+                optimizer = RMSpropTF(
+                    params, lr=self.lr, weight_decay=self.weight_decay
+                )
+        elif self.optimizer == "Madgrad":
+
+            if self.finetuning_method == "full_sawtooth":
+                optimizer = MADGRAD(
+                    [
+                        {
+                            "params": head_params,
+                            "lr": self.lr,
+                            "momentum": 0.9,
+                            "weight_decay": self.weight_decay,
+                            "name": "cls_head",
+                        },
+                        {
+                            "params": encoder_params,
+                            "lr": self.lr,
+                            "momentum": 0.9,
+                            "weight_decay": self.weight_decay,
+                            "name": "encoder",
+                        },
+                    ]
+                )
+
+            else:
+                optimizer = MADGRAD(
+                    params, lr=self.lr, momentum=0.9, weight_decay=self.weight_decay
                 )
 
         if not self.scheduler:

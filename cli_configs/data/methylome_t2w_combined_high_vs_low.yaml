@@ -27,7 +27,6 @@ data:
   cv:
     k: 5
 
-  num_classes: 2
   patch_size: [64, 64, 64]
 
 fixed_survival_time_bins:
@@ -36,8 +35,6 @@ fixed_survival_time_bins:
   num_time_bins: 5
 
 model:
-  task: Survival
-  subtask: null
   cifar_size: false
   input_channels: 2
   input_dim: 3

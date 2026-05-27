@@ -5,7 +5,7 @@ defaults:
   - data: cifar10
 
 teamname: 'debug'
-output_subdir: ${exp_dir}/${teamname}/classification/${data.module.name}/checkpoints/${make_group_name:}
+output_subdir: ${exp_dir}/${teamname}/survival/${data.module.name}/checkpoints/${make_group_name:}
 hydra:
   output_subdir: ${output_subdir}
   job:
@@ -20,37 +20,26 @@ seed: False
 
 model:
   optimizer: SGD
-  sam: False  # set trainer.precision=32 if you use sam
-  adaptive_sam: False  # set trainer.precision=32 if you use sam
   lr: 0.1
   nesterov: False
   scheduler: CosineAnneal
   T_max: ${trainer.max_epochs}
   warmstart: 0
   warmstart2: 0
-  mixup: False
-  mixup_alpha: 0.2
   weight_decay: 5e-4
   undecay_norm: False
-  label_smoothing: 0.0
   stochastic_depth: False
   resnet_dropout: 0.0
   squeeze_excitation: False
-  apply_shakedrop: False
   zero_init_residual: False
   input_dim: 2
   input_channels: 3
-  task: 'Classification'
-  subtask: 'multiclass'  # 'multilabel'
   metric_computation_mode: 'epochwise'
   result_plot: 'val'
-  num_classes: ${data.num_classes}
   metrics: ${metrics}
   epochs: ${trainer.max_epochs}
   name: ${model_name_extractor:${model._target_}}
   compile: False
-  classification_head_dropout: 0.0
-  token_aggregation_method: cls_token
   pretrained: False
   finetune_method: full
   save_preds: True
@@ -96,7 +85,7 @@ trainer:
   strategy: 'ddp'
   logger: 
     _target_: lightning.pytorch.loggers.WandbLogger
-    save_dir: ${exp_dir}/${teamname}/classification/${data.module.name}
+    save_dir: ${exp_dir}/${teamname}/survival/${data.module.name}
     offline: False
     project: ${data.module.name}
     group: ???
