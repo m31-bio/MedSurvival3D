@@ -98,3 +98,7 @@ trainer:
       patience: 50
       min_delta: 0.002
 metrics: []
+# Optional stratification metric controls (defaults shown):
+# survival_stratification_landmark_year: 5.0           # year used as landmark for NLL/DeepHit scalar risk (1 - S(t))
+# survival_stratification_quantile_range: [0.2, 0.8]   # candidate bracket for max-logrank cutpoint search (Cox/NLL/DeepHit)
+
