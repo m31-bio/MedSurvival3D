@@ -76,8 +76,15 @@ model:
     max_frac: 0.80            # HPARAM: [0.6, 0.95]. Ceiling on mean(p_high); guards against "all-high". Keep min_frac < max_frac.
   save_preds: true            # Lightweight wandb table; safe to leave on.
   result_plot: null
-  # Stratification controls below are INACTIVE for soft_logrank (cutoff fixed at p_high=0.5).
-  # survival_stratification_landmark_year: 5.0
+  # Stratification controls for soft_logrank.
+  # Default cutoff is p_high=0.5 (equivalently, risk logit > 0). Setting
+  # soft_logrank_use_max_logrank_cutpoint: true switches Train/Val
+  # logrank_chi2 / logrank_p / hazard_ratio to the training-optimal
+  # log-rank cutpoint on the risk logit, scanned within
+  # survival_stratification_quantile_range. KM validation plot is
+  # unaffected (still uses p_high > 0.5).
+  # soft_logrank_use_max_logrank_cutpoint: false
+  # survival_stratification_landmark_year: 5.0   # unused by soft_logrank
   # survival_stratification_quantile_range: [0.2, 0.8]
 trainer:
   logger:
