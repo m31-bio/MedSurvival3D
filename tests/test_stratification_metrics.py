@@ -64,3 +64,78 @@ def test_derive_scores_unknown_loss_raises():
         derive_stratification_scores(
             "mystery", risks=np.array([0.1]), survival_curves=None, landmark_bin_idx=0,
         )
+
+
+# -------- Config plumbing tests --------
+
+def _make_kwargs(**overrides):
+    """Minimal kwargs needed to instantiate BaseModel for survival task."""
+    base = dict(
+        task="Survival",
+        metric_computation_mode="epochwise",
+        result_plot=False,
+        metrics=[],
+        num_classes=4,
+        name="test",
+        lr=1e-3,
+        weight_decay=0.0,
+        optimizer="adam",
+        nesterov=False,
+        sam=False,
+        adaptive_sam=False,
+        scheduler=None,
+        T_max=1,
+        warmstart=0,
+        epochs=1,
+        mixup=False,
+        mixup_alpha=0.2,
+        label_smoothing=0.0,
+        stochastic_depth=0.0,
+        resnet_dropout=0.0,
+        squeeze_excitation=False,
+        apply_shakedrop=False,
+        undecay_norm=False,
+        zero_init_residual=False,
+        input_dim=3,
+        input_channels=1,
+        pretrained=False,
+        # kwargs-accessed fields
+        warmstart2=0,
+        save_preds=False,
+        finetune_method=None,
+        subtask=None,
+        num_time_bins=4,
+        survival_loss={"name": "cox"},
+        survival_cut_points_years=[1.0, 2.0, 3.0],
+        survival_landmark_years=[1.0, 2.0, 3.0],
+    )
+    base.update(overrides)
+    return base
+
+
+def test_stratification_config_defaults():
+    from base_model import BaseModel
+
+    model = BaseModel(**_make_kwargs())
+    assert model.survival_stratification_landmark_year == 5.0
+    assert model.survival_stratification_quantile_range == (0.2, 0.8)
+
+
+def test_stratification_config_explicit_values():
+    from base_model import BaseModel
+
+    model = BaseModel(**_make_kwargs(
+        survival_stratification_landmark_year=3.0,
+        survival_stratification_quantile_range=[0.25, 0.75],
+    ))
+    assert model.survival_stratification_landmark_year == 3.0
+    assert model.survival_stratification_quantile_range == (0.25, 0.75)
+
+
+def test_stratification_quantile_range_validation():
+    from base_model import BaseModel
+
+    with pytest.raises(ValueError, match="quantile_range"):
+        BaseModel(**_make_kwargs(
+            survival_stratification_quantile_range=[0.8, 0.2],
+        ))

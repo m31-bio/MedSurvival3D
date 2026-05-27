@@ -299,6 +299,32 @@ class BaseModel(L.LightningModule):
                 self._format_survival_landmark_label(value)
                 for value in landmark_years
             ]
+            landmark_year_cfg = kwargs.get("survival_stratification_landmark_year", 5.0)
+            if isinstance(landmark_year_cfg, (list, tuple)):
+                if not landmark_year_cfg:
+                    raise ValueError(
+                        "survival_stratification_landmark_year must not be empty"
+                    )
+                print(
+                    "Warning: survival_stratification_landmark_year given as list; "
+                    f"using first value {landmark_year_cfg[0]}"
+                )
+                landmark_year_cfg = landmark_year_cfg[0]
+            self.survival_stratification_landmark_year = float(landmark_year_cfg)
+
+            q_range_cfg = kwargs.get(
+                "survival_stratification_quantile_range",
+                (0.2, 0.8),
+            )
+            q_lo, q_hi = float(q_range_cfg[0]), float(q_range_cfg[1])
+            if not (0.0 < q_lo < q_hi < 1.0):
+                raise ValueError(
+                    "survival_stratification_quantile_range must satisfy "
+                    f"0 < q_lo < q_hi < 1; got ({q_lo}, {q_hi})"
+                )
+            self.survival_stratification_quantile_range = (q_lo, q_hi)
+
+            self._stratification_landmark_bin_warned = False
             self.train_survival_risks = []
             self.train_survival_curves = []
             self.train_survival_time_bins = []
