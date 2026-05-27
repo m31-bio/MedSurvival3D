@@ -47,6 +47,17 @@ def _torch_load_checkpoint(path, map_location="cpu"):
         return torch.load(path, map_location=map_location)
 
 
+def _checkpoint_stratification_cutpoint(checkpoint):
+    """Return the cutpoint persisted by BaseModel.on_save_checkpoint, or None."""
+    saved = checkpoint.get("stratification_cutpoint")
+    if saved is None:
+        return None
+    saved = float(saved)
+    if math.isnan(saved):
+        return None
+    return saved
+
+
 def _as_path(value):
     return Path(os.path.expanduser(str(value))).resolve()
 
@@ -623,7 +634,7 @@ def load_model(training_cfg, checkpoint_path, device):
     model.load_state_dict(checkpoint["state_dict"])
     model.to(device)
     model.eval()
-    return model
+    return model, checkpoint
 
 
 def prediction_dataloader(datamodule, dataset):
@@ -643,7 +654,8 @@ def run_fold(cfg, exp_dir, pred_dir, fold, device, metrics_rows, pooled_val_risk
         raise ModuleNotFoundError("Hydra is required to instantiate the survival data module.")
     score, checkpoint_path = select_best_checkpoint(exp_dir, fold, cfg.checkpoint_glob)
     training_cfg = _load_training_cfg(exp_dir, cfg.splits_json, fold)
-    model = load_model(training_cfg, checkpoint_path, device)
+    model, checkpoint = load_model(training_cfg, checkpoint_path, device)
+    saved_cutpoint = _checkpoint_stratification_cutpoint(checkpoint)
     datamodule = instantiate(training_cfg.data).module
     datamodule.setup("predict")
 
@@ -666,8 +678,12 @@ def run_fold(cfg, exp_dir, pred_dir, fold, device, metrics_rows, pooled_val_risk
             outputs["risk"] = outputs["risk_scalar"]
         if split == "val":
             if survival_loss_name == "soft_logrank":
-                cutoff = 0.5
-                cutoff_source = "fixed_0.5_p_high"
+                if saved_cutpoint is not None:
+                    cutoff = saved_cutpoint
+                    cutoff_source = "checkpoint_max_logrank_cutpoint"
+                else:
+                    cutoff = 0.5
+                    cutoff_source = "fixed_0.5_p_high"
             else:
                 cutoff = float(np.median(outputs["risk"]))
                 cutoff_source = "fold_val_median"
@@ -677,11 +693,7 @@ def run_fold(cfg, exp_dir, pred_dir, fold, device, metrics_rows, pooled_val_risk
             cutoff_path.write_text(json.dumps({"cutoff": cutoff}, indent=2))
         else:
             cutoff = fold_outputs["val_cutoff"]
-            cutoff_source = (
-                "fixed_0.5_p_high"
-                if survival_loss_name == "soft_logrank"
-                else "fold_val_median"
-            )
+            cutoff_source = fold_outputs["val_cutoff_source"]
 
         out_dir = pred_dir / f"fold_{fold}" / split
         write_predictions(outputs, out_dir, bin_columns, landmark_map, cutoff, survival_loss_name)
@@ -715,6 +727,7 @@ def run_fold(cfg, exp_dir, pred_dir, fold, device, metrics_rows, pooled_val_risk
         fold_outputs[f"{split}_outputs"] = outputs
         if split == "val":
             fold_outputs["val_cutoff"] = cutoff
+            fold_outputs["val_cutoff_source"] = cutoff_source
 
     return {
         "fold": fold,

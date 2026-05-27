@@ -736,6 +736,7 @@ class BaseModel(L.LightningModule):
             use_strict_gt = False
 
         cutoff_is_nan = math.isnan(cutoff)
+        self._stratification_cutpoint = None if cutoff_is_nan else float(cutoff)
 
         for split_name, scores, times, events in (
             ("Train", train_scores, train_times, train_events),
@@ -1035,6 +1036,11 @@ class BaseModel(L.LightningModule):
 
         # self.predictions.append(y_hat)
         return y, y_hat
+
+    def on_save_checkpoint(self, checkpoint) -> None:
+        cutpoint = getattr(self, "_stratification_cutpoint", None)
+        if cutpoint is not None:
+            checkpoint["stratification_cutpoint"] = cutpoint
 
     def on_validation_epoch_end(self) -> None:
         if self.task == "Survival":

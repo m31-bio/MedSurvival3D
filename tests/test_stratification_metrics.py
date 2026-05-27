@@ -388,6 +388,109 @@ def test_strat_metrics_soft_logrank_flag_on_nan_cutpoint_yields_nan_metrics():
     assert math.isnan(stub.log.calls["Train/hazard_ratio"])
 
 
+# -------- on_save_checkpoint bundling tests --------
+
+def test_on_save_checkpoint_bundles_finite_cutpoint():
+    from base_model import BaseModel
+
+    stub = types.SimpleNamespace()
+    stub._stratification_cutpoint = 0.42
+    checkpoint = {"state_dict": {}}
+    BaseModel.on_save_checkpoint(stub, checkpoint)
+    assert checkpoint["stratification_cutpoint"] == 0.42
+
+
+def test_on_save_checkpoint_omits_when_cutpoint_is_none():
+    from base_model import BaseModel
+
+    stub = types.SimpleNamespace()
+    stub._stratification_cutpoint = None
+    checkpoint = {"state_dict": {}}
+    BaseModel.on_save_checkpoint(stub, checkpoint)
+    assert "stratification_cutpoint" not in checkpoint
+
+
+def test_on_save_checkpoint_omits_when_attribute_missing():
+    """If validation never ran, the attribute is absent and no key is added."""
+    from base_model import BaseModel
+
+    stub = types.SimpleNamespace()
+    checkpoint = {"state_dict": {}}
+    BaseModel.on_save_checkpoint(stub, checkpoint)
+    assert "stratification_cutpoint" not in checkpoint
+
+
+def test_strat_metrics_stashes_cutpoint_for_soft_logrank_flag_off():
+    """Flag off uses cutoff=0.0; that value must be stashed on the module."""
+    rng = np.random.default_rng(0)
+    train_risks = np.concatenate([rng.uniform(-3, -0.5, 20), rng.uniform(0.5, 3, 20)])
+    train_times = np.concatenate([rng.uniform(5, 10, 20), rng.uniform(0.5, 2, 20)])
+    train_events = np.ones(40)
+    stub = _make_stub_model(
+        "soft_logrank",
+        train_risks=train_risks, val_risks=train_risks,
+        train_times=train_times, val_times=train_times,
+        train_events=train_events, val_events=train_events,
+        soft_logrank_use_max_logrank_cutpoint=False,
+    )
+    _invoke(stub)
+    assert stub._stratification_cutpoint == 0.0
+
+
+def test_strat_metrics_stashes_cutpoint_for_soft_logrank_flag_on():
+    """Flag on scans for max-logrank cutpoint; that scanned value must be stashed."""
+    rng = np.random.default_rng(2)
+    low = rng.uniform(0.1, 0.4, 30)
+    high = rng.uniform(0.6, 1.0, 30)
+    train_risks = np.concatenate([low, high])
+    train_times = np.concatenate([rng.uniform(5, 10, 30), rng.uniform(0.5, 2, 30)])
+    train_events = np.ones(60)
+    stub = _make_stub_model(
+        "soft_logrank",
+        train_risks=train_risks, val_risks=train_risks,
+        train_times=train_times, val_times=train_times,
+        train_events=train_events, val_events=train_events,
+        soft_logrank_use_max_logrank_cutpoint=True,
+    )
+    _invoke(stub)
+    # Scanned cutpoint lives strictly between the two clusters (0.4, 0.6).
+    assert isinstance(stub._stratification_cutpoint, float)
+    assert 0.4 < stub._stratification_cutpoint < 0.7
+
+
+def test_strat_metrics_stashes_none_when_cutpoint_is_nan():
+    """When max_logrank_cutpoint returns NaN, stash None (skip-in-checkpoint signal)."""
+    train_risks = np.zeros(40)
+    train_times = np.linspace(1.0, 10.0, 40)
+    train_events = np.ones(40)
+    stub = _make_stub_model(
+        "soft_logrank",
+        train_risks=train_risks, val_risks=train_risks,
+        train_times=train_times, val_times=train_times,
+        train_events=train_events, val_events=train_events,
+        soft_logrank_use_max_logrank_cutpoint=True,
+    )
+    _invoke(stub)
+    assert stub._stratification_cutpoint is None
+
+
+def test_strat_metrics_stashes_cutpoint_for_cox():
+    """Non-soft_logrank losses already scan; the scanned cutoff must be stashed."""
+    rng = np.random.default_rng(1)
+    train_risks = np.concatenate([rng.uniform(0.0, 0.4, 30), rng.uniform(0.6, 1.0, 30)])
+    train_times = np.concatenate([rng.uniform(5, 10, 30), rng.uniform(0.5, 2, 30)])
+    train_events = np.ones(60)
+    stub = _make_stub_model(
+        "cox",
+        train_risks=train_risks, val_risks=train_risks,
+        train_times=train_times, val_times=train_times,
+        train_events=train_events, val_events=train_events,
+    )
+    _invoke(stub)
+    assert isinstance(stub._stratification_cutpoint, float)
+    assert 0.4 < stub._stratification_cutpoint < 0.7
+
+
 def test_strat_metrics_flag_ignored_for_cox():
     """Setting the soft_logrank flag has no effect when the loss is cox."""
     rng = np.random.default_rng(1)

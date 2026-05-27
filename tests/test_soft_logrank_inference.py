@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from inference_survival import (  # noqa: E402
+    _checkpoint_stratification_cutpoint,
     compute_hazard_ratio,
     compute_logrank_stat,
 )
@@ -55,6 +56,24 @@ def test_hazard_ratio_nan_when_no_events():
     group_high = np.array([True, False, True])
     hr = compute_hazard_ratio(time, event, group_high)
     assert math.isnan(hr)
+
+
+def test_checkpoint_cutpoint_returns_float_when_present():
+    assert _checkpoint_stratification_cutpoint({"stratification_cutpoint": 0.37}) == 0.37
+
+
+def test_checkpoint_cutpoint_returns_none_when_key_absent():
+    assert _checkpoint_stratification_cutpoint({"state_dict": {}}) is None
+
+
+def test_checkpoint_cutpoint_returns_none_when_value_is_nan():
+    assert _checkpoint_stratification_cutpoint(
+        {"stratification_cutpoint": float("nan")}
+    ) is None
+
+
+def test_checkpoint_cutpoint_returns_none_when_value_is_none():
+    assert _checkpoint_stratification_cutpoint({"stratification_cutpoint": None}) is None
 
 
 if __name__ == "__main__":

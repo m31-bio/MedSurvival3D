@@ -55,17 +55,17 @@ model:
   input_dim: 3
   input_shape: ${data.patch_size}
   optimizer: AdamW
-  lr: 1.0e-05
+  lr: 5.0e-06
   scheduler: CosineAnneal
   T_max: 80
   warmstart: 10
   warmstart2: 10
   weight_decay: 0.001
   finetune_method: full_sawtooth
-  resnet_dropout: 0.15
+  resnet_dropout: 0.2
   num_time_bins: ${fixed_survival_time_bins.num_time_bins}
   survival_head_hidden_dim: 128
-  survival_head_dropout: 0.05
+  survival_head_dropout: 0.2
   survival_head_norm: layernorm
   survival_cut_points_years: ${fixed_survival_time_bins.cut_points_years}
   survival_landmark_years: ${fixed_survival_time_bins.cut_points_years}
@@ -95,7 +95,7 @@ trainer:
       _target_: lightning.pytorch.callbacks.EarlyStopping
       monitor: Val/C-index
       mode: max
-      patience: 50
+      patience: 30
       min_delta: 0.002
 metrics: []
 # Optional stratification metric controls (defaults shown):
