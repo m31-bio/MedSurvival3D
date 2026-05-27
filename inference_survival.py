@@ -205,6 +205,7 @@ def run_split_inference(model, dataloader, dataset, device, split, fold):
         "survival": [],
         "survival_time": [],
         "risk": [],
+        "p_high": [],
     }
     time_bins = []
     times = []
@@ -231,6 +232,7 @@ def run_split_inference(model, dataloader, dataset, device, split, fold):
     survival = np.concatenate(outputs["survival"], axis=0)
     survival_time = np.concatenate(outputs["survival_time"], axis=0).reshape(-1)
     risk_per_sample = np.concatenate(outputs["risk"], axis=0).reshape(-1)
+    p_high = np.concatenate(outputs["p_high"], axis=0).reshape(-1)
     patient_ids = list(dataset.img_files[:seen])
 
     return {
@@ -248,6 +250,7 @@ def run_split_inference(model, dataloader, dataset, device, split, fold):
         # Cox-mode "risk" is the head scalar; NLL/DeepHit fall back to -∑survival.
         "risk_scalar": risk_per_sample,
         "risk": -survival.sum(axis=1),
+        "p_high": p_high,
     }
 
 
@@ -404,6 +407,35 @@ def write_matrix_csv(path, patient_ids, matrix, columns):
 
 def write_predictions(outputs, out_dir, bin_columns, landmark_map, cutoff, survival_loss_name):
     out_dir.mkdir(parents=True, exist_ok=True)
+    if survival_loss_name == "soft_logrank":
+        header = [
+            "patient_id",
+            "split",
+            "fold",
+            "time",
+            "time_bin",
+            "event",
+            "logit",
+            "p_high",
+            "risk_group",
+        ]
+        with (out_dir / "predictions.csv").open("w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(header)
+            for idx, patient_id in enumerate(outputs["patient_id"]):
+                p = float(outputs["p_high"][idx])
+                writer.writerow([
+                    patient_id,
+                    outputs["split"],
+                    outputs["fold"],
+                    float(outputs["time"][idx]),
+                    int(outputs["time_bin"][idx]),
+                    int(outputs["event"][idx]),
+                    float(outputs["risk"][idx]),  # logit (fc_risk scalar)
+                    p,
+                    "high" if p >= cutoff else "low",
+                ])
+        return
     risk_groups = np.where(outputs["risk"] >= cutoff, "high", "low")
     header = [
         "patient_id",
@@ -475,12 +507,22 @@ def compute_metrics(outputs, survival_loss_name):
         )
     else:
         metrics["ibs"] = float("nan")
+
+    if survival_loss_name == "soft_logrank":
+        group_high = outputs["p_high"] >= 0.5
+        chi2, p_value = compute_logrank_stat(outputs["time"], outputs["event"], group_high)
+        hr = compute_hazard_ratio(outputs["time"], outputs["event"], group_high)
+        metrics["logrank_chi2"] = chi2
+        metrics["logrank_p"] = p_value
+        metrics["hazard_ratio"] = hr
+        metrics["fraction_high"] = float(group_high.mean())
     return metrics
 
 
-def plot_km_high_low(outputs, cutoff, path):
+def plot_km_high_low(outputs, cutoff, path, score_key="risk"):
     path.parent.mkdir(parents=True, exist_ok=True)
-    high = outputs["risk"] >= cutoff
+    score = outputs[score_key]
+    high = score >= cutoff
     plt.figure(figsize=(6, 4))
     for label, mask, color in [
         ("Low risk", ~high, "#1f77b4"),
@@ -620,41 +662,56 @@ def run_fold(cfg, exp_dir, pred_dir, fold, device, metrics_rows, pooled_val_risk
         ("test", prediction_dataloader(datamodule, datamodule.test_dataset), datamodule.test_dataset),
     ]:
         outputs = run_split_inference(model, dataloader, dataset, device, split, fold)
-        if survival_loss_name == "cox":
+        if survival_loss_name in ("cox", "soft_logrank"):
             outputs["risk"] = outputs["risk_scalar"]
         if split == "val":
-            cutoff = float(np.median(outputs["risk"]))
+            if survival_loss_name == "soft_logrank":
+                cutoff = 0.5
+                cutoff_source = "fixed_0.5_p_high"
+            else:
+                cutoff = float(np.median(outputs["risk"]))
+                cutoff_source = "fold_val_median"
             pooled_val_risks.extend(outputs["risk"].tolist())
-            cutoff_source = "fold_val_median"
             cutoff_path = pred_dir / f"fold_{fold}" / "risk_cutoff.json"
             cutoff_path.parent.mkdir(parents=True, exist_ok=True)
             cutoff_path.write_text(json.dumps({"cutoff": cutoff}, indent=2))
         else:
             cutoff = fold_outputs["val_cutoff"]
-            cutoff_source = "fold_val_median"
+            cutoff_source = (
+                "fixed_0.5_p_high"
+                if survival_loss_name == "soft_logrank"
+                else "fold_val_median"
+            )
 
         out_dir = pred_dir / f"fold_{fold}" / split
         write_predictions(outputs, out_dir, bin_columns, landmark_map, cutoff, survival_loss_name)
-        plot_km_high_low(outputs, cutoff, out_dir / "km_high_low.png")
-        if survival_loss_name != "cox":
+        score_key = "p_high" if survival_loss_name == "soft_logrank" else "risk"
+        plot_km_high_low(outputs, cutoff, out_dir / "km_high_low.png", score_key=score_key)
+        if survival_loss_name not in ("cox", "soft_logrank"):
             lmk_rows = landmark_rows(outputs, landmark_map, cutoff)
             write_landmark_risks(lmk_rows, out_dir / "landmark_risks.csv")
             plot_landmark_bars(lmk_rows, out_dir / "landmark_risk_bars.png")
 
         metrics = compute_metrics(outputs, survival_loss_name)
-        metrics_rows.append(
-            {
-                "scope": "fold",
-                "fold": fold,
-                "split": split,
-                "c_index": metrics["c_index"],
-                "ibs": metrics["ibs"],
-                "n_patients": metrics["n_patients"],
-                "n_events": metrics["n_events"],
-                "cutoff_source": cutoff_source,
-                "cutoff": cutoff,
-            }
-        )
+        row = {
+            "scope": "fold",
+            "fold": fold,
+            "split": split,
+            "c_index": metrics["c_index"],
+            "ibs": metrics["ibs"],
+            "n_patients": metrics["n_patients"],
+            "n_events": metrics["n_events"],
+            "cutoff_source": cutoff_source,
+            "cutoff": cutoff,
+        }
+        if survival_loss_name == "soft_logrank":
+            row.update({
+                "logrank_chi2": metrics["logrank_chi2"],
+                "logrank_p": metrics["logrank_p"],
+                "hazard_ratio": metrics["hazard_ratio"],
+                "fraction_high": metrics["fraction_high"],
+            })
+        metrics_rows.append(row)
         fold_outputs[f"{split}_outputs"] = outputs
         if split == "val":
             fold_outputs["val_cutoff"] = cutoff
@@ -672,6 +729,24 @@ def run_fold(cfg, exp_dir, pred_dir, fold, device, metrics_rows, pooled_val_risk
 
 def make_ensemble_outputs(fold_results, survival_loss_name):
     base = fold_results[0]["test_outputs"]
+
+    if survival_loss_name == "soft_logrank":
+        logit = np.stack(
+            [result["test_outputs"]["risk"] for result in fold_results],
+            axis=0,
+        ).mean(axis=0)
+        p_high = 1.0 / (1.0 + np.exp(-logit))
+        return {
+            "patient_id": base["patient_id"],
+            "split": "test",
+            "fold": "ensemble",
+            "time_bin": base["time_bin"],
+            "time": base["time"],
+            "event": base["event"],
+            "p_high": p_high,
+            "risk": logit,
+            "predicted_survival_time": np.full_like(logit, fill_value=np.nan, dtype=float),
+        }
 
     if survival_loss_name == "cox":
         risk = np.stack(
@@ -740,12 +815,17 @@ def write_metrics_csv(metrics_rows, path):
         "n_events",
         "cutoff_source",
         "cutoff",
+        "logrank_chi2",
+        "logrank_p",
+        "hazard_ratio",
+        "fraction_high",
     ]
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=header)
+        writer = csv.DictWriter(f, fieldnames=header, extrasaction="ignore")
         writer.writeheader()
-        writer.writerows(metrics_rows)
+        for row in metrics_rows:
+            writer.writerow({k: row.get(k, "") for k in header})
 
 
 def _inference_impl(cfg):
@@ -771,12 +851,17 @@ def _inference_impl(cfg):
         )
 
     if len(fold_results) > 1:
-        pooled_cutoff = float(np.median(np.asarray(pooled_val_risks, dtype=float)))
+        survival_loss_name = _resolve_survival_loss_name(fold_results[0]["training_cfg"])
+
+        if survival_loss_name == "soft_logrank":
+            pooled_cutoff = 0.5
+            cutoff_source = "fixed_0.5_p_high"
+        else:
+            pooled_cutoff = float(np.median(np.asarray(pooled_val_risks, dtype=float)))
+            cutoff_source = "pooled_oof_validation_median"
         cutoff_path = pred_dir / "ensemble" / "oof_validation_cutoff.json"
         cutoff_path.parent.mkdir(parents=True, exist_ok=True)
         cutoff_path.write_text(json.dumps({"pooled_oof_cutoff": pooled_cutoff}, indent=2))
-
-        survival_loss_name = _resolve_survival_loss_name(fold_results[0]["training_cfg"])
 
         ensemble = make_ensemble_outputs(fold_results, survival_loss_name)
         out_dir = pred_dir / "ensemble" / "test"
@@ -788,25 +873,34 @@ def _inference_impl(cfg):
             pooled_cutoff,
             survival_loss_name,
         )
-        plot_km_high_low(ensemble, pooled_cutoff, out_dir / "km_high_low.png")
-        if survival_loss_name != "cox":
+        score_key = "p_high" if survival_loss_name == "soft_logrank" else "risk"
+        plot_km_high_low(
+            ensemble, pooled_cutoff, out_dir / "km_high_low.png", score_key=score_key
+        )
+        if survival_loss_name not in ("cox", "soft_logrank"):
             lmk_rows = landmark_rows(ensemble, fold_results[0]["landmark_map"], pooled_cutoff)
             write_landmark_risks(lmk_rows, out_dir / "landmark_risks.csv")
             plot_landmark_bars(lmk_rows, out_dir / "landmark_risk_bars.png")
         metrics = compute_metrics(ensemble, survival_loss_name)
-        metrics_rows.append(
-            {
-                "scope": "ensemble",
-                "fold": "all",
-                "split": "test",
-                "c_index": metrics["c_index"],
-                "ibs": metrics["ibs"],
-                "n_patients": metrics["n_patients"],
-                "n_events": metrics["n_events"],
-                "cutoff_source": "pooled_oof_validation_median",
-                "cutoff": pooled_cutoff,
-            }
-        )
+        ensemble_row = {
+            "scope": "ensemble",
+            "fold": "all",
+            "split": "test",
+            "c_index": metrics["c_index"],
+            "ibs": metrics["ibs"],
+            "n_patients": metrics["n_patients"],
+            "n_events": metrics["n_events"],
+            "cutoff_source": cutoff_source,
+            "cutoff": pooled_cutoff,
+        }
+        if survival_loss_name == "soft_logrank":
+            ensemble_row.update({
+                "logrank_chi2": metrics["logrank_chi2"],
+                "logrank_p": metrics["logrank_p"],
+                "hazard_ratio": metrics["hazard_ratio"],
+                "fraction_high": metrics["fraction_high"],
+            })
+        metrics_rows.append(ensemble_row)
 
     write_metrics_csv(metrics_rows, pred_dir / "metrics.csv")
 
