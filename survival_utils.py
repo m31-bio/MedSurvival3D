@@ -276,6 +276,63 @@ def survival_to_time(survival: torch.Tensor) -> torch.Tensor:
     return torch.sum(survival, dim=1)
 
 
+def soft_logrank_loss(
+    p_high: torch.Tensor,
+    time: torch.Tensor,
+    event: torch.Tensor,
+) -> torch.Tensor:
+    """Directional Mantel-Cox log-rank signal on soft high-risk membership.
+
+    Encourages high-risk patients to have more observed events than expected.
+    Returns ``-mean_over_event_times(o_high - e_high)`` so lower = better.
+    """
+    p_high = p_high.float().view(-1)
+    time = time.to(device=p_high.device, dtype=torch.float32).view(-1)
+    event = event.to(device=p_high.device, dtype=torch.float32).view(-1)
+
+    # Grad-preserving zero used as the no-op / no-event fallback.
+    zero = p_high.sum() * 0.0
+
+    event_mask = event > 0.5
+    if not torch.any(event_mask):
+        return zero
+
+    unique_event_times = torch.unique(time[event_mask])
+    if unique_event_times.numel() == 0:
+        return zero
+
+    signal = zero
+    for t in unique_event_times:
+        at_risk = time >= t
+        n_total = at_risk.sum()
+        if n_total <= 0:
+            continue
+        events_at_t = at_risk & (time == t) & event_mask
+        d_total = events_at_t.sum()
+        if d_total <= 0:
+            continue
+        n_high = p_high[at_risk].sum()
+        o_high = p_high[events_at_t].sum()
+        e_high = d_total.float() * n_high / n_total.float()
+        signal = signal + (o_high - e_high)
+
+    return -signal / float(unique_event_times.numel())
+
+
+def group_balance_penalty(
+    p_high: torch.Tensor,
+    min_frac: float = 0.20,
+    max_frac: float = 0.80,
+) -> torch.Tensor:
+    """Weak range-clamp penalty that fires only when ``p_high.mean()`` exits
+    ``[min_frac, max_frac]``. Returns a non-negative scalar."""
+    p_high = p_high.float().view(-1)
+    mean_high = p_high.mean()
+    too_small = torch.relu(torch.tensor(min_frac, device=p_high.device) - mean_high)
+    too_large = torch.relu(mean_high - torch.tensor(max_frac, device=p_high.device))
+    return too_small.pow(2) + too_large.pow(2)
+
+
 class NLLSurvLoss(nn.Module):
     """
     Negative log-likelihood loss for discrete-time survival prediction.
