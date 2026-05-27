@@ -660,7 +660,6 @@ def build_survival_criterion(cfg, num_time_bins: int):
     )
 
 
-import math as _math
 import numpy as _np
 
 
