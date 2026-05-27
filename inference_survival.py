@@ -302,6 +302,97 @@ def km_step_curve(times, events):
     return np.asarray(x), np.asarray(y)
 
 
+def compute_logrank_stat(times, events, group_high):
+    """Two-sample Mantel-Cox log-rank chi-square + asymptotic p-value.
+
+    Returns ``(chi2, p_value)``. ``chi2`` is NaN if either group is empty.
+    ``p_value`` is computed from the chi-square(1) survival function via a
+    Wilson-Hilferty cube-root approximation (no scipy dependency).
+    """
+    times = np.asarray(times, dtype=float)
+    events = np.asarray(events, dtype=bool)
+    group_high = np.asarray(group_high, dtype=bool)
+
+    if group_high.sum() == 0 or (~group_high).sum() == 0:
+        return float("nan"), float("nan")
+
+    o_minus_e = 0.0
+    variance = 0.0
+    for t in np.sort(np.unique(times[events])):
+        at_risk = times >= t
+        n_total = at_risk.sum()
+        if n_total <= 1:
+            continue
+        n_high = (at_risk & group_high).sum()
+        d_total = ((times == t) & events).sum()
+        if d_total <= 0:
+            continue
+        d_high = ((times == t) & events & group_high).sum()
+        e_high = d_total * n_high / n_total
+        # Hypergeometric variance
+        v = (
+            d_total
+            * n_high
+            * (n_total - n_high)
+            * (n_total - d_total)
+            / (n_total * n_total * (n_total - 1))
+        )
+        o_minus_e += d_high - e_high
+        variance += v
+
+    if variance <= 0:
+        return 0.0, 1.0
+    chi2 = (o_minus_e ** 2) / variance
+    # Wilson-Hilferty: for chi-square with 1 df, treat as normal squared.
+    z = math.sqrt(max(chi2, 0.0))
+    # Two-sided p-value via standard-normal complementary CDF.
+    p = math.erfc(z / math.sqrt(2.0))
+    return float(chi2), float(p)
+
+
+def compute_hazard_ratio(times, events, group_high):
+    """Approximate HR(high vs low) from the log-rank statistics.
+
+    HR ≈ exp((O_high - E_high) / V_high), the standard log-rank derived
+    estimator. Returns NaN if no events or one group is empty.
+    """
+    times = np.asarray(times, dtype=float)
+    events = np.asarray(events, dtype=bool)
+    group_high = np.asarray(group_high, dtype=bool)
+
+    if events.sum() == 0:
+        return float("nan")
+    if group_high.sum() == 0 or (~group_high).sum() == 0:
+        return float("nan")
+
+    o_minus_e = 0.0
+    variance = 0.0
+    for t in np.sort(np.unique(times[events])):
+        at_risk = times >= t
+        n_total = at_risk.sum()
+        if n_total <= 1:
+            continue
+        n_high = (at_risk & group_high).sum()
+        d_total = ((times == t) & events).sum()
+        if d_total <= 0:
+            continue
+        d_high = ((times == t) & events & group_high).sum()
+        e_high = d_total * n_high / n_total
+        v = (
+            d_total
+            * n_high
+            * (n_total - n_high)
+            * (n_total - d_total)
+            / (n_total * n_total * (n_total - 1))
+        )
+        o_minus_e += d_high - e_high
+        variance += v
+
+    if variance <= 0:
+        return float("nan")
+    return float(math.exp(o_minus_e / variance))
+
+
 def write_matrix_csv(path, patient_ids, matrix, columns):
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="") as f:
