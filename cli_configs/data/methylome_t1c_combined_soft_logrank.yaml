@@ -1,10 +1,22 @@
 # @package _global_
+# ---------------------------------------------------------------------------
+# SSL3D survival -- soft-LogRank stratification on T1c+mask (Dataset019).
+#
+# HPO objective: maximize Val/logrank_chi2 (Mantel-Cox chi^2 on validation
+# fold, p_high >= 0.5 cutoff). Logged once per epoch from
+# base_model._compute_stratification_metrics. Larger == better separation
+# between predicted high/low risk groups.
+#
+# Locked by orchestrator (forced_overrides):
+#   data=methylome_t1c_combined_soft_logrank, data.module.fold=0,
+#   data.cv.k=1, model=resenc_survival, trainer.enable_checkpointing=False.
+# ---------------------------------------------------------------------------
 data:
   module:
     _target_: datasets.coca_t1c_combined_b2nd.COCACombinedB2NDDataModule
     name: Methylome_T1c_SoftLogRank
     data_root_dir: /home/jma/Documents/projects/safwat/coca_classifier_codebase/dataset/nnssl_preprocessed/Dataset019_UHN_Mayo_T1c_mask
-    batch_size: 24
+    batch_size: 24            # HPARAM: choices [8, 16, 24, 32]. Larger -> stabler logrank gradients but more VRAM.
     train_transforms:
       _target_: augmentation.policies.batchgenerators.get_training_transforms
       patch_size: ${data.patch_size}
@@ -15,7 +27,7 @@ data:
       _target_: augmentation.policies.batchgenerators.get_test_transforms
       patch_size: ${data.patch_size}
       do_dummy_2d_data_aug: false
-    fold: 0
+    fold: 0                   # LOCKED via forced_overrides (HPO uses only fold 0).
     data_subdir: nnsslPlans_onemmiso/Dataset019_UHN_Mayo_T1c_mask/Dataset019_UHN_Mayo_T1c_mask
     label_file: /home/jma/Documents/projects/safwat/coca_classifier_codebase/dataset/nnssl_preprocessed/Dataset019_UHN_Mayo_T1c_mask/survival_labels.json
     split_file: /home/jma/Documents/projects/safwat/coca_classifier_codebase/dataset/nnssl_preprocessed/Dataset019_UHN_Mayo_T1c_mask/splits.json
@@ -25,59 +37,66 @@ data:
     target_shape: ${data.patch_size}
     allow_missing_mask: false
   cv:
-    k: 5
+    k: 1                      # LOCKED to 1 by forced_overrides: keeps main.py's fold loop to a single pass on fold 0.
   num_classes: 2
-  patch_size: [64, 64, 64]
+  patch_size: [64, 64, 64]    # Fixed by the preprocessed dataset; not a tunable.
 fixed_survival_time_bins:
-  cut_points_years: [1.0, 2.0, 3.0, 5.0]
+  cut_points_years: [1.0, 2.0, 3.0, 5.0]  # Fixed clinical bin edges -> 5 time bins.
   labels: [0-1y, 1-2y, 2-3y, 3-5y, 5y+]
   num_time_bins: 5
 model:
-  task: Survival
+  task: Survival              # Triggers BaseModel survival branch. Do NOT change.
   subtask: null
   cifar_size: false
-  input_channels: 2
+  input_channels: 2           # T1c + brain mask. Tied to data layout.
   input_dim: 3
   input_shape: ${data.patch_size}
-  optimizer: AdamW
-  lr: 1.0e-04
-  scheduler: CosineAnneal
-  T_max: 80
-  warmstart: 10
-  warmstart2: 10
-  weight_decay: 1.0e-04
-  finetune_method: full_sawtooth
-  resnet_dropout: 0.2
+  # --- Optimization knobs (primary HPO surface) ---
+  optimizer: AdamW            # HPARAM: choices [AdamW, Adam, Madgrad, Rmsprop]. AdamW is default; SGD untested with full_sawtooth survival.
+  lr: 1.0e-04                 # HPARAM (log): [1e-6, 5e-3]. Soft-logrank likes moderate LRs; too high collapses p_high to 0/1.
+  scheduler: CosineAnneal     # Leave fixed; warmstart/T_max below define the schedule shape.
+  T_max: 80                   # HPARAM (int): [30, 200]. Length of cosine decay phase (epochs). Must satisfy T_max + warmstart + warmstart2 <= max_epochs in practice.
+  warmstart: 10               # HPARAM (int): [0, 30]. Linear warmup epochs (also warmup1 under full_sawtooth).
+  warmstart2: 10              # HPARAM (int): [0, 30]. Second warmup epochs; only used when finetune_method=full_sawtooth.
+  weight_decay: 1.0e-04       # HPARAM (log): [1e-6, 1e-2]. Stronger WD often helps the small head; encoder may want less.
+  finetune_method: full_sawtooth  # HPARAM: choices [full, full_sawtooth]. full_sawtooth groups encoder+head separately and uses double warmup.
+  resnet_dropout: 0.2         # HPARAM: [0.0, 0.5]. Encoder feature-map dropout knob (note: depends on encoder honouring it).
+  # --- Survival head / loss knobs ---
   num_time_bins: ${fixed_survival_time_bins.num_time_bins}
-  survival_head_hidden_dim: 128
-  survival_head_dropout: 0.2
-  survival_head_norm: layernorm
+  survival_head_hidden_dim: 128   # HPARAM: choices [64, 128, 256, 512]. MLP hidden dim before scalar risk projection.
+  survival_head_dropout: 0.2      # HPARAM: [0.0, 0.5]. Dropout inside the head's two MLP blocks.
+  survival_head_norm: layernorm   # HPARAM: choices [layernorm, batchnorm, none]. batchnorm can misbehave with batch_size=1 grads (already guarded).
   survival_cut_points_years: ${fixed_survival_time_bins.cut_points_years}
   survival_landmark_years: ${fixed_survival_time_bins.cut_points_years}
-  survival_smoothing_alpha: 0.05
+  survival_smoothing_alpha: 0.05  # HPARAM: [0.0, 0.3]. EMA smoothing for displayed loss/C-index; does NOT affect Val/logrank_chi2 -- low tuning priority.
   survival_loss:
-    name: soft_logrank
-    lambda_balance: 0.01
-    min_frac: 0.20
-    max_frac: 0.80
-  save_preds: true
+    name: soft_logrank        # LOCKED: this is the goal-defining loss. Other losses would not produce p_high stratification used by Val/logrank_chi2 with cutoff=0.
+    lambda_balance: 0.01      # HPARAM (log): [1e-4, 1.0]. Weight on group-balance penalty (keeps fraction_high inside [min_frac, max_frac]). 0 = pure logrank.
+    min_frac: 0.20            # HPARAM: [0.05, 0.4]. Floor on mean(p_high); guards against degenerate "all-low" prediction.
+    max_frac: 0.80            # HPARAM: [0.6, 0.95]. Ceiling on mean(p_high); guards against "all-high". Keep min_frac < max_frac.
+  save_preds: true            # Lightweight wandb table; safe to leave on.
   result_plot: null
+  # Stratification controls below are INACTIVE for soft_logrank (cutoff fixed at p_high=0.5).
+  # survival_stratification_landmark_year: 5.0
+  # survival_stratification_quantile_range: [0.2, 0.8]
 trainer:
   logger:
     project: nnSSL_MethylomeRisk_Survival
     name: t1c_mask_soft_logrank
-  accumulate_grad_batches: 2
-  max_epochs: 200
+  accumulate_grad_batches: 2  # HPARAM: choices [1, 2, 4, 8]. Effective batch = batch_size * accumulate. Larger helps logrank curvature estimate.
+  max_epochs: 200             # Hard cap; real stop usually driven by early_stopping below.
   sync_batchnorm: true
+  # Checkpointing is disabled via forced_overrides (trainer.enable_checkpointing=False).
+  # save_top_k=0 below is an extra belt to ensure no checkpoint files are written even if the flag flips.
   callbacks:
     checkpoint:
       filename: best-cindex-epoch{epoch}-Val_loss={Val/loss:.2f}-Val_C-index={Val/C-index:.4f}
       mode: max
       monitor: Val/C-index
-      save_top_k: 0
+      save_top_k: 0           # Forced off-equivalent: never persists checkpoints.
     early_stopping:
       _target_: lightning.pytorch.callbacks.EarlyStopping
-      monitor: Val/C-index
+      monitor: Val/logrank_chi2   # Aligned with HPO objective (was Val/C-index).
       mode: max
       patience: 30
       min_delta: 0.002
