@@ -174,6 +174,10 @@ def _make_stub_model(loss_name, train_risks, val_risks, train_times, val_times,
     stub.survival_stratification_landmark_year = landmark_year
     stub.survival_stratification_quantile_range = (0.2, 0.8)
     stub._stratification_landmark_bin_warned = False
+    # Bind the unbound method so `self._resolve_stratification_landmark_bin()`
+    # in _compute_stratification_metrics resolves correctly on the stub.
+    from base_model import BaseModel
+    stub._resolve_stratification_landmark_bin = lambda: BaseModel._resolve_stratification_landmark_bin(stub)
     stub.trainer = types.SimpleNamespace(sanity_checking=False)
     stub.log = _StubLogger()
     return stub

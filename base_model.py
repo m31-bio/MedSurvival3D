@@ -676,7 +676,7 @@ class BaseModel(L.LightningModule):
 
         loss_name = self.survival_loss_name
         landmark_bin_idx = (
-            BaseModel._resolve_stratification_landmark_bin(self)
+            self._resolve_stratification_landmark_bin()
             if loss_name in ("nll", "deephit")
             else None
         )
