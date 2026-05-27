@@ -76,7 +76,7 @@ def test_candidate_cap_limits_evaluations(monkeypatch):
     times = np.random.default_rng(0).uniform(0.5, 10.0, size=5000)
     events = np.ones(5000)
     max_logrank_cutpoint(scores, times, events, q_lo=0.2, q_hi=0.8)
-    assert call_count["n"] <= 200
+    assert call_count["n"] <= survival_utils.MAX_CANDIDATES
 
 
 if __name__ == "__main__":

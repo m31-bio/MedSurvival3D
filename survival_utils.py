@@ -663,6 +663,11 @@ def build_survival_criterion(cfg, num_time_bins: int):
 import numpy as _np
 
 
+#: Maximum number of candidate cutoffs evaluated by `max_logrank_cutpoint`
+#: when the bracket has more candidates. Sub-samples to a uniform quantile grid.
+MAX_CANDIDATES = 200
+
+
 def _logrank_chi2(times, events, group_high):
     """Mantel-Cox log-rank chi^2 (NumPy, no scipy). Mirrors the implementation
     in inference_survival.compute_logrank_stat but returns only chi^2 and is
@@ -713,7 +718,8 @@ def max_logrank_cutpoint(scores, times, events, q_lo=0.2, q_hi=0.8):
     Note: the returned chi^2 is biased upward by the selection, so logged
     chi^2 values are training diagnostics rather than formal significance tests.
 
-    Returns float('nan') when no valid candidate yields two non-empty groups.
+    Returns float('nan') when no valid candidate yields two non-empty groups,
+    or when every candidate produces zero chi^2 (no separating signal).
     At most 200 candidate cutoffs are evaluated; large input sets are
     sub-sampled to a uniform quantile grid.
     """
@@ -734,7 +740,6 @@ def max_logrank_cutpoint(scores, times, events, q_lo=0.2, q_hi=0.8):
     if unique_candidates.size == 0:
         return float("nan")
 
-    MAX_CANDIDATES = 200
     if unique_candidates.size > MAX_CANDIDATES:
         # Uniform quantile grid across the bracket.
         qs = _np.linspace(q_lo, q_hi, MAX_CANDIDATES)
@@ -755,7 +760,7 @@ def max_logrank_cutpoint(scores, times, events, q_lo=0.2, q_hi=0.8):
         elif chi2 == best_chi2:
             best_tied.append(float(c))
 
-    if best_chi2 < 0 or not best_tied:
+    if best_chi2 <= 0 or not best_tied:
         return float("nan")
     # Tie-break: median of tied candidates.
     return float(_np.median(_np.asarray(best_tied)))
