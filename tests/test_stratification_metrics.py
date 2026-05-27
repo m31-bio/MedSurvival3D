@@ -141,6 +141,27 @@ def test_stratification_quantile_range_validation():
         ))
 
 
+def test_soft_logrank_use_max_logrank_cutpoint_default_false():
+    from base_model import BaseModel
+
+    model = BaseModel(**_make_kwargs())
+    assert model.soft_logrank_use_max_logrank_cutpoint is False
+
+
+def test_soft_logrank_use_max_logrank_cutpoint_explicit_true():
+    from base_model import BaseModel
+
+    model = BaseModel(**_make_kwargs(soft_logrank_use_max_logrank_cutpoint=True))
+    assert model.soft_logrank_use_max_logrank_cutpoint is True
+
+
+def test_soft_logrank_use_max_logrank_cutpoint_coerces_truthy():
+    from base_model import BaseModel
+
+    model = BaseModel(**_make_kwargs(soft_logrank_use_max_logrank_cutpoint=1))
+    assert model.soft_logrank_use_max_logrank_cutpoint is True
+
+
 # -------- _compute_stratification_metrics integration tests --------
 
 class _StubLogger:

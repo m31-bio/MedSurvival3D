@@ -326,6 +326,9 @@ class BaseModel(L.LightningModule):
                     f"0 < q_lo < q_hi < 1; got ({q_lo}, {q_hi})"
                 )
             self.survival_stratification_quantile_range = (q_lo, q_hi)
+            self.soft_logrank_use_max_logrank_cutpoint = bool(kwargs.get(
+                "soft_logrank_use_max_logrank_cutpoint", False
+            ))
 
             self._stratification_landmark_bin_warned = False
             self.train_survival_risks = []
