@@ -667,25 +667,6 @@ class BaseModel(L.LightningModule):
                 sync_dist=True,
             )
 
-            if self.survival_loss_name == "soft_logrank":
-                for sub_key in (
-                    "logrank",
-                    "balance",
-                    "p_high_mean",
-                    "p_high_min",
-                    "p_high_max",
-                    "fraction_high_hard",
-                ):
-                    if sub_key in loss_parts:
-                        self.log(
-                            f"Train/SoftLogRank_{sub_key}",
-                            loss_parts[sub_key],
-                            on_step=False,
-                            on_epoch=True,
-                            prog_bar=False,
-                            sync_dist=True,
-                        )
-
             if torch.isnan(y_hat["logits"]).any():
                 print("######################################### Model predicts NaNs!")
 
@@ -816,25 +797,6 @@ class BaseModel(L.LightningModule):
                 prog_bar=False,
                 sync_dist=True,
             )
-
-            if self.survival_loss_name == "soft_logrank":
-                for sub_key in (
-                    "logrank",
-                    "balance",
-                    "p_high_mean",
-                    "p_high_min",
-                    "p_high_max",
-                    "fraction_high_hard",
-                ):
-                    if sub_key in val_loss_parts:
-                        self.log(
-                            f"Val/SoftLogRank_{sub_key}",
-                            val_loss_parts[sub_key],
-                            on_step=False,
-                            on_epoch=True,
-                            prog_bar=False,
-                            sync_dist=True,
-                        )
 
             if hasattr(self, "val_preds"):
                 actual_batch_size = x.size(0)
