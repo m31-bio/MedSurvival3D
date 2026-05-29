@@ -64,53 +64,32 @@ def time_dependent_auc(
     landmark_years,
     cut_points_years,
 ):
-    """
-    Calculate cumulative/dynamic AUC at configured landmark times.
+    """Cumulative/dynamic AUC at each landmark via torchsurv. Returns {landmark: auc}."""
+    from torchsurv.metrics.auc import Auc
+    survival = torch.as_tensor(survival).float()
+    t = torch.as_tensor(event_times).float().view(-1)
+    e = torch.as_tensor(event_observed).bool().view(-1)
+    landmarks = torch.as_tensor(landmark_years).float().view(-1)
+    cut_points = torch.as_tensor(cut_points_years).float().view(-1)
+    num_bins = survival.shape[1]
 
-    Cases are observed events at or before the landmark. Controls are patients
-    known to be event-free after the landmark. Patients censored before or at
-    the landmark are excluded for that landmark.
-    """
-    if not isinstance(survival, torch.Tensor):
-        survival = torch.as_tensor(survival)
-    if not isinstance(event_times, torch.Tensor):
-        event_times = torch.as_tensor(event_times)
-    if not isinstance(event_observed, torch.Tensor):
-        event_observed = torch.as_tensor(event_observed)
-    if not isinstance(landmark_years, torch.Tensor):
-        landmark_years = torch.as_tensor(landmark_years)
-    if not isinstance(cut_points_years, torch.Tensor):
-        cut_points_years = torch.as_tensor(cut_points_years)
-
-    survival = survival.detach().float()
-    event_times = event_times.detach().float().view(-1).to(survival.device)
-    event_observed = event_observed.detach().bool().view(-1).to(survival.device)
-    landmark_years = landmark_years.detach().float().view(-1).to(survival.device)
-    cut_points_years = cut_points_years.detach().float().view(-1).to(survival.device)
-
-    if survival.numel() == 0 or landmark_years.numel() == 0:
+    if survival.numel() == 0 or landmarks.numel() == 0:
         return {}
 
-    num_time_bins = survival.shape[1]
-    landmark_bins = torch.bucketize(
-        landmark_years,
-        cut_points_years,
-        right=False,
-    ).clamp(0, num_time_bins - 1)
+    # Map each landmark value to its survival-curve column using the same
+    # bucketize logic as the old implementation, preserving correctness for
+    # non-arange cut_points (e.g. irregular time grids).
+    landmark_bins = torch.bucketize(landmarks, cut_points, right=False).clamp(0, num_bins - 1)
 
-    aucs = {}
-    for landmark, landmark_bin in zip(landmark_years, landmark_bins):
-        observed_by_landmark = event_observed & (event_times <= landmark)
-        known_event_free_after_landmark = event_times > landmark
-        valid = observed_by_landmark | known_event_free_after_landmark
-
-        risk = 1.0 - survival[:, int(landmark_bin.item())]
-        aucs[float(landmark.cpu().item())] = _binary_roc_auc(
-            risk[valid],
-            observed_by_landmark[valid],
-        )
-
-    return aucs
+    auc = Auc()
+    out = {}
+    for lm, b in zip(landmarks.tolist(), landmark_bins.tolist()):
+        risk = 1.0 - survival[:, int(b)]
+        try:
+            out[float(lm)] = float(auc(risk, e, t, new_time=torch.tensor(float(lm))))
+        except Exception:
+            out[float(lm)] = float("nan")
+    return out
 
 
 def integrated_brier_score(survival, event_times, event_observed):
