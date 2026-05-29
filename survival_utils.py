@@ -348,44 +348,23 @@ class NLLSurvLoss(nn.Module):
 
 
 class CoxPHLoss(nn.Module):
-    """
-    Cox proportional hazards negative partial log-likelihood.
+    """Cox partial likelihood via torchsurv (Efron ties). Input: risk, time, event."""
 
-    ``risk`` should be a scalar per sample where larger values indicate higher
-    risk. ``time`` can be continuous follow-up/event time, and ``event`` should
-    be 1 for observed events and 0 for censored observations.
-    """
-
-    def __init__(self, reduction: str = "mean"):
+    def __init__(self, reduction: str = "mean", ties_method: str = "efron"):
         super().__init__()
-        if reduction not in {"mean", "sum", "none"}:
-            raise ValueError("reduction must be one of: 'mean', 'sum', 'none'")
+        from torchsurv.loss import cox
+        self._fn = cox.neg_partial_log_likelihood
         self.reduction = reduction
+        self.ties_method = ties_method
 
-    def forward(
-        self,
-        risk: torch.Tensor,
-        time: torch.Tensor,
-        event: torch.Tensor,
-    ) -> torch.Tensor:
-        risk = risk.float().view(-1)
-        time = time.to(device=risk.device, dtype=torch.float32).view(-1)
-        event = event.to(device=risk.device, dtype=torch.bool).view(-1)
-
-        if risk.numel() == 0 or not torch.any(event):
-            return risk.sum() * 0.0
-
-        risk_set = time.view(1, -1) >= time.view(-1, 1)
-        masked_risk = risk.view(1, -1).masked_fill(~risk_set, float("-inf"))
-        log_risk_set = torch.logsumexp(masked_risk, dim=1)
-
-        neg_log_lik = -(risk - log_risk_set)[event]
-
-        if self.reduction == "mean":
-            return neg_log_lik.mean()
-        if self.reduction == "sum":
-            return neg_log_lik.sum()
-        return neg_log_lik
+    def forward(self, risk, time, event):
+        log_hz = risk.float().view(-1)
+        ev = event.to(torch.bool).view(-1)
+        if ev.sum() == 0:
+            return log_hz.sum() * 0.0
+        t = time.to(torch.float32).view(-1)
+        return self._fn(log_hz, ev, t, ties_method=self.ties_method,
+                        reduction=self.reduction, checks=False)
 
 
 class DeepHitLoss(nn.Module):
