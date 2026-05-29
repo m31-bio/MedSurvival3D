@@ -344,46 +344,21 @@ def compute_logrank_stat(times, events, group_high):
 
 
 def compute_hazard_ratio(times, events, group_high):
-    """Approximate HR(high vs low) from the log-rank statistics.
+    """HR (high vs low) via a univariate Cox model in lifelines."""
+    import pandas as pd
+    from lifelines import CoxPHFitter
 
-    HR ≈ exp((O_high - E_high) / V_high), the standard log-rank derived
-    estimator. Returns NaN if no events or one group is empty.
-    """
     times = np.asarray(times, dtype=float)
-    events = np.asarray(events, dtype=bool)
-    group_high = np.asarray(group_high, dtype=bool)
-
-    if events.sum() == 0:
+    events = np.asarray(events).astype(int)
+    group_high = np.asarray(group_high).astype(int)
+    if events.sum() == 0 or len(np.unique(group_high)) < 2:
         return float("nan")
-    if group_high.sum() == 0 or (~group_high).sum() == 0:
+    df = pd.DataFrame({"time": times, "event": events, "high": group_high})
+    try:
+        cph = CoxPHFitter().fit(df, duration_col="time", event_col="event")
+        return float(np.exp(cph.params_["high"]))
+    except Exception:
         return float("nan")
-
-    o_minus_e = 0.0
-    variance = 0.0
-    for t in np.sort(np.unique(times[events])):
-        at_risk = times >= t
-        n_total = at_risk.sum()
-        if n_total <= 1:
-            continue
-        n_high = (at_risk & group_high).sum()
-        d_total = ((times == t) & events).sum()
-        if d_total <= 0:
-            continue
-        d_high = ((times == t) & events & group_high).sum()
-        e_high = d_total * n_high / n_total
-        v = (
-            d_total
-            * n_high
-            * (n_total - n_high)
-            * (n_total - d_total)
-            / (n_total * n_total * (n_total - 1))
-        )
-        o_minus_e += d_high - e_high
-        variance += v
-
-    if variance <= 0:
-        return float("nan")
-    return float(math.exp(o_minus_e / variance))
 
 
 def write_matrix_csv(path, patient_ids, matrix, columns):
