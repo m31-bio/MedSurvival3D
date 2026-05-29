@@ -79,6 +79,19 @@ def test_candidate_cap_limits_evaluations(monkeypatch):
     assert call_count["n"] <= survival_utils.MAX_CANDIDATES
 
 
+def test_chi2_matches_lifelines():
+    import numpy as np
+    from lifelines.statistics import logrank_test
+    from survival_utils import _logrank_chi2
+    rng = np.random.default_rng(7)
+    t = rng.integers(1, 20, size=100).astype(float)
+    e = (rng.random(100) > 0.4).astype(int)
+    g = rng.random(100) > 0.5
+    chi2 = _logrank_chi2(t, e, g)
+    want = logrank_test(t[g], t[~g], event_observed_A=e[g], event_observed_B=e[~g]).test_statistic
+    assert abs(float(chi2) - float(want)) < 1e-6
+
+
 if __name__ == "__main__":
     import pytest
 

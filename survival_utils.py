@@ -669,45 +669,20 @@ MAX_CANDIDATES = 200
 
 
 def _logrank_chi2(times, events, group_high):
-    """Mantel-Cox log-rank chi^2 (NumPy, no scipy). Mirrors the implementation
-    in inference_survival.compute_logrank_stat but returns only chi^2 and is
-    used internally by max_logrank_cutpoint for fast scanning.
+    """Log-rank chi^2 via lifelines. Used internally by max_logrank_cutpoint.
 
-    Returns 0.0 when either group is empty so the caller can simply argmax.
+    Returns float('nan') when either group is empty or there are no events,
+    so the caller can skip invalid candidates.
     """
-    times = _np.asarray(times, dtype=float)
-    events = _np.asarray(events, dtype=bool)
-    group_high = _np.asarray(group_high, dtype=bool)
+    from lifelines.statistics import logrank_test
 
-    if group_high.sum() == 0 or (~group_high).sum() == 0:
-        return 0.0
-
-    o_minus_e = 0.0
-    variance = 0.0
-    for t in _np.sort(_np.unique(times[events])):
-        at_risk = times >= t
-        n_total = at_risk.sum()
-        if n_total <= 1:
-            continue
-        n_high = (at_risk & group_high).sum()
-        d_total = ((times == t) & events).sum()
-        if d_total <= 0:
-            continue
-        d_high = ((times == t) & events & group_high).sum()
-        e_high = d_total * n_high / n_total
-        v = (
-            d_total
-            * n_high
-            * (n_total - n_high)
-            * (n_total - d_total)
-            / (n_total * n_total * (n_total - 1))
-        )
-        o_minus_e += d_high - e_high
-        variance += v
-
-    if variance <= 0:
-        return 0.0
-    return float((o_minus_e ** 2) / variance)
+    times = _np.asarray(times, float)
+    events = _np.asarray(events).astype(int)
+    g = _np.asarray(group_high).astype(bool)
+    if g.sum() == 0 or (~g).sum() == 0 or events.sum() == 0:
+        return float("nan")
+    return float(logrank_test(times[g], times[~g],
+                              event_observed_A=events[g], event_observed_B=events[~g]).test_statistic)
 
 
 def max_logrank_cutpoint(scores, times, events, q_lo=0.2, q_hi=0.8):
