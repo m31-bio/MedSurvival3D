@@ -28,23 +28,18 @@ def test_cox():
 
 
 def test_deephit_reads_hyperparameters():
-    cfg = {"name": "deephit", "alpha": 2.0, "beta": 0.3, "gamma": 0.1, "sigma": 0.2}
+    cfg = {"name": "deephit", "alpha": 0.3, "sigma": 0.2}
     name, fn = build_survival_criterion(cfg, num_time_bins=5)
     assert name == "deephit"
     assert isinstance(fn, DeepHitLoss)
-    assert fn.alpha == 2.0
-    assert fn.beta == 0.3
-    assert fn.gamma == 0.1
-    assert fn.sigma == 0.2
-    assert fn.num_time_bins == 5
+    assert fn._loss.alpha == 0.3
+    assert fn._loss.sigma == 0.2
 
 
 def test_deephit_defaults():
     name, fn = build_survival_criterion({"name": "deephit"}, num_time_bins=5)
-    assert fn.alpha == 1.0
-    assert fn.beta == 0.5
-    assert fn.gamma == 0.0
-    assert fn.sigma == 0.1
+    assert fn._loss.alpha == 0.2
+    assert fn._loss.sigma == 0.1
 
 
 def test_missing_block_defaults_to_nll():

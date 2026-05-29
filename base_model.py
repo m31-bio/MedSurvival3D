@@ -296,7 +296,7 @@ class BaseModel(L.LightningModule):
             loss = self.criterion(y_hat["risk"], continuous_time, event)
             loss_parts = {"total": loss, name: loss}
         elif name == "deephit":
-            loss = self.criterion(y_hat["pmf"], time_bin, event)
+            loss = self.criterion(y_hat["pmf_logits"], time_bin, event)
             loss_parts = {"total": loss, name: loss}
         elif name == "soft_logrank":
             total, components = self.criterion(

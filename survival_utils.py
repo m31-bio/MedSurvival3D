@@ -368,126 +368,24 @@ class CoxPHLoss(nn.Module):
 
 
 class DeepHitLoss(nn.Module):
+    """Single-event DeepHit via pycox. Input: raw pmf logits, int time bins, event.
+
+    total = alpha * NLL + (1 - alpha) * ranking. No calibration term (pycox).
     """
-    Single-event DeepHit loss (Lee et al. 2018) as a PyTorch ``nn.Module``.
-
-    Inputs to ``forward``:
-        - ``pmf``: ``[B, num_time_bins]`` tensor, softmax over time bins.
-        - ``time_bin``: ``[B]`` int64 tensor, 0-indexed bin of event/censor time.
-        - ``event``: ``[B]`` tensor in {0, 1}; 1 if the event was observed.
-
-    Output: scalar = ``alpha * LL + beta * Ranking + gamma * Calibration``.
-
-    Note: ``gamma`` multiplies the calibration term, which sums across the
-    batch (matching the TensorFlow reference). Its effective scale therefore
-    grows with batch size — re-tune ``gamma`` if you change batch size.
-    """
-
-    _EPSILON = 1e-7
-
-    def __init__(
-        self,
-        num_time_bins: int,
-        alpha: float = 1.0,
-        beta: float = 0.5,
-        gamma: float = 0.0,
-        sigma: float = 0.1,
-    ):
+    def __init__(self, alpha: float = 0.2, sigma: float = 0.1):
         super().__init__()
-        if num_time_bins < 2:
-            raise ValueError("num_time_bins must be >= 2.")
-        if sigma <= 0.0:
-            raise ValueError("sigma must be > 0.")
-        self.num_time_bins = num_time_bins
-        self.alpha = float(alpha)
-        self.beta = float(beta)
-        self.gamma = float(gamma)
-        self.sigma = float(sigma)
+        from pycox.models.loss import DeepHitSingleLoss
+        self._loss = DeepHitSingleLoss(alpha=float(alpha), sigma=float(sigma))
 
-    def _masks(self, time_bin: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """Build (mask1, mask2) from the time-bin index.
-
-        mask1[i, t] = 1 iff t == time_bin[i]            (event point)
-        mask2[i, t] = 1 iff t >= time_bin[i]            (survival region)
-        """
-        idx = torch.arange(self.num_time_bins, device=time_bin.device).view(1, -1)
-        t = time_bin.view(-1, 1)
-        mask1 = (idx == t).to(dtype=torch.float32)
-        mask2 = (idx >= t).to(dtype=torch.float32)
-        return mask1, mask2
-
-    def _loss_log_likelihood(
-        self,
-        pmf: torch.Tensor,
-        mask1: torch.Tensor,
-        mask2: torch.Tensor,
-        event: torch.Tensor,
-    ) -> torch.Tensor:
-        eps = self._EPSILON
-        observed = (mask1 * pmf).sum(dim=1).clamp_min(eps)
-        censored = (mask2 * pmf).sum(dim=1).clamp_min(eps)
-        log_obs = torch.log(observed)
-        log_cen = torch.log(censored)
-        return -(event * log_obs + (1.0 - event) * log_cen).mean()
-
-    def _loss_ranking(
-        self,
-        pmf: torch.Tensor,
-        time_bin: torch.Tensor,
-        mask2: torch.Tensor,
-        event: torch.Tensor,
-    ) -> torch.Tensor:
-        """Pairwise ranking penalty at each uncensored event time."""
-        if event.sum() == 0:
-            return pmf.sum() * 0.0
-
-        surv_at_t = (pmf.unsqueeze(1) * mask2.unsqueeze(0)).sum(dim=2)
-        diag = torch.diagonal(surv_at_t)
-        diff = diag.view(-1, 1) - surv_at_t
-
-        t_i = time_bin.view(-1, 1).float()
-        t_j = time_bin.view(1, -1).float()
-        ordered = (t_i < t_j).to(dtype=torch.float32)
-        event_i = event.view(-1, 1)
-        weight = ordered * event_i
-
-        denom = weight.sum().clamp_min(1.0)
-        return (weight * torch.exp(-diff / self.sigma)).sum() / denom
-
-    def _loss_calibration(
-        self,
-        pmf: torch.Tensor,
-        mask2: torch.Tensor,
-        event: torch.Tensor,
-    ) -> torch.Tensor:
-        """DeepHit's calibration term (Lee et al. reference impl, single-event).
-
-        Matches class_DeepHit.py loss_Calibration: r[t] = Σ_i pmf[i, t] * mask2[i, t]
-        (sum over batch), then per-sample term = mean_t((r[t] - event[i])^2),
-        summed across the batch.
-        """
-        r = (pmf * mask2).sum(dim=0)                       # [K], summed over batch
-        diff = r.unsqueeze(0) - event.unsqueeze(1)          # [B, K]
-        per_subject = diff.pow(2).mean(dim=1)               # [B]
-        return per_subject.sum()
-
-    def forward(
-        self,
-        pmf: torch.Tensor,
-        time_bin: torch.Tensor,
-        event: torch.Tensor,
-    ) -> torch.Tensor:
-        pmf = pmf.float()
-        time_bin = time_bin.to(device=pmf.device, dtype=torch.long).view(-1)
-        event = event.to(device=pmf.device, dtype=torch.float32).view(-1)
-        time_bin = time_bin.clamp(0, self.num_time_bins - 1)
-
-        mask1, mask2 = self._masks(time_bin)
-
-        ll = self._loss_log_likelihood(pmf, mask1, mask2, event)
-        rank = self._loss_ranking(pmf, time_bin, mask2, event)
-        cal = self._loss_calibration(pmf, mask2, event)
-        return self.alpha * ll + self.beta * rank + self.gamma * cal
+    def forward(self, pmf_logits, time, event):
+        from pycox.models.data import pair_rank_mat
+        idx = time.to(torch.int64).view(-1)
+        ev = event.to(torch.int64).view(-1)
+        rank_mat = torch.as_tensor(
+            pair_rank_mat(idx.detach().cpu().numpy(), ev.detach().cpu().numpy()),
+            dtype=pmf_logits.dtype, device=pmf_logits.device,
+        )
+        return self._loss(pmf_logits, idx, ev.to(pmf_logits.dtype), rank_mat)
 
 
 class SoftLogRankLoss(nn.Module):
@@ -575,11 +473,8 @@ def build_survival_criterion(cfg, num_time_bins: int):
         return name, CoxPHLoss(reduction=cfg.get("reduction", "mean"))
     if name == "deephit":
         return name, DeepHitLoss(
-            num_time_bins=num_time_bins,
-            alpha=float(cfg.get("alpha", 1.0)),
-            beta=float(cfg.get("beta", 0.5)),
-            gamma=float(cfg.get("gamma", 0.0)),
-            sigma=float(cfg.get("sigma", 0.1)),
+            alpha=cfg.get("alpha", 0.2),
+            sigma=cfg.get("sigma", 0.1),
         )
     if name == "soft_logrank":
         return name, SoftLogRankLoss(
