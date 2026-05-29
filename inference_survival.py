@@ -40,6 +40,10 @@ from survival_utils import (
 )
 from sksurv.metrics import concordance_index_censored as _sksurv_cic
 
+# All survival losses that produce a full survival curve (S(t) at each bin).
+# Cox and soft_logrank produce only a scalar risk, not a curve.
+CURVE_LOSSES = ("nll", "deephit", "pmf", "mtlr", "bcesurv", "weibull", "pchazard")
+
 
 def sksurv_cindex(time, event, risk):
     """Harrell C-index via scikit-survival. event=1 -> observed event."""
@@ -395,7 +399,7 @@ def write_predictions(outputs, out_dir, bin_columns, landmark_map, cutoff, survi
     ]
     years = sorted(landmark_map)
 
-    has_curve = survival_loss_name in ("nll", "deephit")
+    has_curve = survival_loss_name in CURVE_LOSSES
     if has_curve:
         header.extend([
             f"pred_risk_{int(year) if year.is_integer() else year:g}y" for year in years
@@ -431,11 +435,14 @@ def write_predictions(outputs, out_dir, bin_columns, landmark_map, cutoff, survi
         # do not persist them. The trained projection is fc_pmf → pmf.csv.
         write_matrix_csv(out_dir / "pmf.csv", outputs["patient_id"], outputs["pmf"], bin_columns)
         write_matrix_csv(out_dir / "survival_curves.csv", outputs["patient_id"], outputs["survival"], bin_columns)
+    elif survival_loss_name in CURVE_LOSSES:
+        # pmf/mtlr/bcesurv/weibull/pchazard: write the survival curve only.
+        # No logits or pmf matrices are trained by these losses.
+        write_matrix_csv(out_dir / "survival_curves.csv", outputs["patient_id"], outputs["survival"], bin_columns)
     elif survival_loss_name == "cox":
         # Cox produces only a scalar risk; no curve outputs.
         pass
-    else:
-        raise ValueError(f"Unknown survival_loss_name: {survival_loss_name!r}")
+    # soft_logrank: handled by its own early-return branch above; nothing to do here.
 
 
 def compute_metrics(outputs, survival_loss_name, train_times=None, train_events=None):
@@ -444,7 +451,7 @@ def compute_metrics(outputs, survival_loss_name, train_times=None, train_events=
         "n_patients": len(outputs["patient_id"]),
         "n_events": int(np.sum(outputs["event"])),
     }
-    if survival_loss_name in ("nll", "deephit"):
+    if survival_loss_name in CURVE_LOSSES:
         test_time = np.asarray(outputs["time"], dtype=float)
         test_event = np.asarray(outputs["event"]).astype(bool)
         survival = np.asarray(outputs["survival"])
@@ -627,7 +634,7 @@ def run_fold(cfg, exp_dir, pred_dir, fold, device, metrics_rows, pooled_val_risk
     # Extract training labels for IPCW metrics (censoring distribution).
     train_times = None
     train_events = None
-    if survival_loss_name in ("nll", "deephit"):
+    if survival_loss_name in CURVE_LOSSES:
         train_ds = datamodule.train_dataset
         _tr_times = []
         _tr_events = []
@@ -782,6 +789,25 @@ def make_ensemble_outputs(fold_results, survival_loss_name):
             "time": base["time"],
             "event": base["event"],
             "pmf": pmf,
+            "survival": survival,
+            "predicted_survival_time": survival_time,
+            "risk": -survival.sum(axis=1),
+        }
+
+    if survival_loss_name in CURVE_LOSSES and survival_loss_name != "nll":
+        # pmf/mtlr/bcesurv/weibull/pchazard: average already-correct survival curves.
+        survival = np.stack(
+            [result["test_outputs"]["survival"] for result in fold_results],
+            axis=0,
+        ).mean(axis=0)
+        survival_time = _tensor_to_numpy(survival_to_time(torch.as_tensor(survival))).reshape(-1)
+        return {
+            "patient_id": base["patient_id"],
+            "split": "test",
+            "fold": "ensemble",
+            "time_bin": base["time_bin"],
+            "time": base["time"],
+            "event": base["event"],
             "survival": survival,
             "predicted_survival_time": survival_time,
             "risk": -survival.sum(axis=1),
