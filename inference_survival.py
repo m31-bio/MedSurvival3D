@@ -32,12 +32,23 @@ except ModuleNotFoundError:
 
 import matplotlib.pyplot as plt
 from survival_utils import (
-    concordance_index,
     hazard_to_survival,
     integrated_brier_score,
     logits_to_hazard,
     survival_to_time,
 )
+from sksurv.metrics import concordance_index_censored as _sksurv_cic
+
+
+def sksurv_cindex(time, event, risk):
+    """Harrell C-index via scikit-survival. event=1 -> observed event."""
+    import numpy as np
+    time = np.asarray(time, dtype=float)
+    event = np.asarray(event).astype(bool)
+    risk = np.asarray(risk, dtype=float)
+    if event.sum() == 0:
+        return float("nan")
+    return float(_sksurv_cic(event, time, risk)[0])
 
 
 def _torch_load_checkpoint(path, map_location="cpu"):
@@ -506,7 +517,7 @@ def write_predictions(outputs, out_dir, bin_columns, landmark_map, cutoff, survi
 
 def compute_metrics(outputs, survival_loss_name):
     metrics = {
-        "c_index": concordance_index(outputs["time"], outputs["risk"], outputs["event"]),
+        "c_index": sksurv_cindex(outputs["time"], outputs["event"], outputs["risk"]),
         "n_patients": len(outputs["patient_id"]),
         "n_events": int(np.sum(outputs["event"])),
     }
