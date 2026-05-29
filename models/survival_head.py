@@ -33,12 +33,25 @@ def _mtlr_surv(phi: torch.Tensor) -> torch.Tensor:
     return 1 - pmf.cumsum(1)
 
 
+def _pchazard_surv(phi: torch.Tensor) -> torch.Tensor:
+    # Replicate pycox PCHazard.predict_surv (sub=1, bin-level resolution):
+    #   haz = softplus(phi)             [B, K]
+    #   haz_padded = [0 | haz]         [B, K+1]  (pad_col where='start')
+    #   surv_full = exp(-cumsum(haz_padded))  [B, K+1]  (S(0)=1 at index 0)
+    #   surv = surv_full[:, 1:]         [B, K]  (right-boundary survival per bin)
+    from pycox.models.utils import pad_col
+    haz = F.softplus(phi)
+    haz_padded = pad_col(haz, where='start')
+    return haz_padded.cumsum(1).mul(-1).exp()[:, 1:]
+
+
 LOGITS_TO_SURVIVAL = {
     "nll": _nll_surv,
     "pmf": _pmf_surv,
     "deephit": _pmf_surv,
     "bcesurv": _bce_surv,
     "mtlr": _mtlr_surv,
+    "pchazard": _pchazard_surv,
 }
 
 
@@ -130,7 +143,7 @@ class PredictionHead(nn.Module):
         name = self.survival_loss_name
         if name in ("pmf", "deephit"):
             return logits_to_survival(name, pmf_logits)
-        if name in ("bcesurv", "mtlr", "nll"):
+        if name in ("bcesurv", "mtlr", "nll", "pchazard"):
             return logits_to_survival(name, hazard_logits)
         if name == "weibull":
             from torchsurv.loss import weibull as _wb
@@ -141,7 +154,7 @@ class PredictionHead(nn.Module):
             )
             surv = _wb.survival_function_weibull(weibull_params, times)
             return surv.clamp(0.0, 1.0)
-        # cox / soft_logrank / pchazard: fall back to cumprod(1-hazard)
+        # cox / soft_logrank: fall back to cumprod(1-hazard)
         return hazard_to_survival(hazard)
 
     def forward(

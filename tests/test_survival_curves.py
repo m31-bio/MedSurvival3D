@@ -32,7 +32,7 @@ def test_bcesurv_curve_is_sigmoid():
 
 def test_curves_are_in_unit_range():
     from models.survival_head import logits_to_survival
-    for name in ("nll", "pmf", "deephit", "bcesurv", "mtlr"):
+    for name in ("nll", "pmf", "deephit", "bcesurv", "mtlr", "pchazard"):
         phi = torch.randn(6, 10)
         s = logits_to_survival(name, phi)
         assert s.shape[0] == 6, name
@@ -43,7 +43,7 @@ def test_curves_are_monotone_nonincreasing():
     from models.survival_head import logits_to_survival
     # bcesurv applies sigmoid independently per time-bin — not constrained to be
     # monotone by design (matches pycox BceSurv behaviour).
-    for name in ("nll", "pmf", "deephit", "mtlr"):
+    for name in ("nll", "pmf", "deephit", "mtlr", "pchazard"):
         phi = torch.randn(6, 10)
         s = logits_to_survival(name, phi)
         assert (s[:, 1:] - s[:, :-1] <= 1e-5).all(), name
@@ -80,3 +80,37 @@ def test_mtlr_curve_matches_pycox_oracle():
     ours = logits_to_survival("mtlr", phi)
     assert ours.shape == ref.shape
     assert torch.allclose(ours.float(), ref, atol=1e-4)
+
+
+def test_pchazard_curve_matches_pycox_oracle():
+    """Pin _pchazard_surv to pycox's real PCHazard.predict_surv (sub=1).
+
+    We instantiate a real pycox PCHazard with an identity Linear net so that
+    model.predict(phi) == phi, then call model.predict_surv which runs pycox's
+    own predict_hazard -> cumsum -> exp pipeline.  This is a true oracle: a
+    future divergence from pycox's transform will fail here.
+    """
+    import numpy as np
+    import torch.nn as nn
+    from pycox.models import PCHazard
+    from models.survival_head import logits_to_survival
+
+    B, K = 5, 8
+    phi = torch.randn(B, K)
+
+    # Identity net: model.predict(phi.numpy()) == phi
+    net = nn.Linear(K, K, bias=False)
+    with torch.no_grad():
+        net.weight.copy_(torch.eye(K))
+    # duration_index has K+1 entries (bin boundaries) for K bins
+    model = PCHazard(net, duration_index=np.arange(K + 1))
+    model.sub = 1
+
+    # predict_surv returns [B, K+1] with S(0)=1 at column 0; drop it -> [B, K]
+    ref_full = model.predict_surv(phi.numpy(), numpy=False)
+    ref = torch.as_tensor(np.asarray(ref_full))[:, 1:].float()
+
+    ours = logits_to_survival("pchazard", phi)
+    assert ours.shape == ref.shape, (ours.shape, ref.shape)
+    assert torch.allclose(ours.float(), ref, atol=1e-4), \
+        f"max abs diff: {(ours.float() - ref).abs().max()}"

@@ -32,6 +32,7 @@ _SURVIVAL_LOSS_TAGS = {
     "pmf": "PMF",
     "mtlr": "MTLR",
     "bcesurv": "BCESurv",
+    "pchazard": "PCHazard",
 }
 
 
@@ -153,6 +154,14 @@ class BaseModel(L.LightningModule):
             torch.tensor(cut_points_years, dtype=torch.float32),
             persistent=False,
         )
+        # Left edges of each bin: bin 0 starts at 0, bin k starts at cut_points[k-1].
+        # Used by _interval_frac to compute the fractional position within a bin.
+        left_edges = [0.0] + list(cut_points_years)  # length K
+        self.register_buffer(
+            "_survival_bin_edges",
+            torch.tensor(left_edges, dtype=torch.float32),
+            persistent=False,
+        )
         self.register_buffer(
             "survival_landmark_years",
             torch.tensor(landmark_years, dtype=torch.float32),
@@ -245,6 +254,29 @@ class BaseModel(L.LightningModule):
         )
         return time_bin.clamp(0, self.num_time_bins - 1).long()
 
+    def _interval_frac(self, continuous_time, time_bin):
+        """Fractional position of continuous_time within its bin, in [0, 1].
+
+        Left edges are 0, cut_points[0], cut_points[1], ..., cut_points[K-2].
+        For non-uniform bins each bin's width equals edges[k+1] - edges[k];
+        the last bin's width equals that of the second-to-last bin (extrapolated).
+        """
+        edges = self._survival_bin_edges.to(continuous_time.device)
+        tb = time_bin.clamp(0, len(edges) - 1)
+        left = edges[tb]
+        # Per-bin width: edges[k+1] - edges[k]. For the last bin use the
+        # previous interval's width (edges has length K = num_time_bins).
+        next_idx = (tb + 1).clamp(0, len(edges) - 1)
+        width = edges[next_idx] - edges[tb]
+        # When tb == last bin, next_idx == tb so width == 0; fall back to
+        # the second-to-last interval width to avoid division by zero.
+        if len(edges) > 1:
+            last_valid_width = (edges[-1] - edges[-2]).clamp_min(1e-7)
+        else:
+            last_valid_width = torch.tensor(1.0, device=edges.device)
+        width = torch.where(width > 0, width, last_valid_width)
+        return ((continuous_time.float() - left) / width).clamp(0.0, 1.0)
+
     def _unpack_survival_targets(self, y):
         if isinstance(y, dict):
             event = y["event"]
@@ -317,6 +349,10 @@ class BaseModel(L.LightningModule):
             loss_parts = {"total": loss, name: loss}
         elif name == "weibull":
             loss = self.criterion(y_hat["weibull_params"], continuous_time, event)
+            loss_parts = {"total": loss, name: loss}
+        elif name == "pchazard":
+            interval_frac = self._interval_frac(continuous_time, time_bin)
+            loss = self.criterion(y_hat["logits"], time_bin, event, interval_frac)
             loss_parts = {"total": loss, name: loss}
         else:
             raise ValueError(f"Unexpected survival_loss_name: {name!r}")

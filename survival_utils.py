@@ -421,6 +421,19 @@ class BCESurvLoss(nn.Module):
         return self._loss(logits, time.to(torch.int64).view(-1), event.to(torch.float32).view(-1))
 
 
+class PCHazardLoss(nn.Module):
+    """pycox piecewise-constant hazard NLL. Input: logits, time bins, event, interval_frac."""
+    def __init__(self):
+        super().__init__()
+        from pycox.models.loss import NLLPCHazardLoss
+        self._loss = NLLPCHazardLoss()
+
+    def forward(self, logits, time, event, interval_frac):
+        return self._loss(logits, time.to(torch.int64).view(-1),
+                          event.to(torch.float32).view(-1),
+                          interval_frac.to(logits.dtype).view(-1))
+
+
 class WeibullLoss(nn.Module):
     """Parametric Weibull AFT via torchsurv. Input: log_params [B,2], time, event."""
     def __init__(self, reduction: str = "mean"):
@@ -539,9 +552,11 @@ def build_survival_criterion(cfg, num_time_bins: int):
         return name, BCESurvLoss()
     if name == "weibull":
         return name, WeibullLoss(reduction=cfg.get("reduction", "mean"))
+    if name == "pchazard":
+        return name, PCHazardLoss()
     raise ValueError(
         f"Unknown survival_loss.name: {name!r}. Expected one of: "
-        "nll, cox, deephit, soft_logrank, pmf, mtlr, bcesurv, weibull."
+        "nll, cox, deephit, soft_logrank, pmf, mtlr, bcesurv, weibull, pchazard."
     )
 
 
