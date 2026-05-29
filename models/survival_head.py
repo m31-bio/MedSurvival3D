@@ -102,6 +102,7 @@ class PredictionHead(nn.Module):
         self.fc_hazard = nn.Linear(hidden_dim2, num_time_bins)
         self.fc_pmf = nn.Linear(hidden_dim2, num_time_bins)
         self.fc_risk = nn.Linear(hidden_dim2, 1)
+        self.fc_weibull = nn.Linear(hidden_dim2, 2)
 
     def _make_norm(self, dim: int) -> nn.Module:
         if self.norm in {"batchnorm", "batch_norm", "batch"}:
@@ -124,13 +125,23 @@ class PredictionHead(nn.Module):
         hazard: torch.Tensor,
         hazard_logits: torch.Tensor,
         pmf_logits: torch.Tensor,
+        weibull_params: torch.Tensor,
     ) -> torch.Tensor:
         name = self.survival_loss_name
         if name in ("pmf", "deephit"):
             return logits_to_survival(name, pmf_logits)
         if name in ("bcesurv", "mtlr", "nll"):
             return logits_to_survival(name, hazard_logits)
-        # cox / soft_logrank / pchazard / weibull: fall back to cumprod(1-hazard)
+        if name == "weibull":
+            from torchsurv.loss import weibull as _wb
+            times = torch.arange(
+                1, self.num_time_bins + 1,
+                device=weibull_params.device,
+                dtype=weibull_params.dtype,
+            )
+            surv = _wb.survival_function_weibull(weibull_params, times)
+            return surv.clamp(0.0, 1.0)
+        # cox / soft_logrank / pchazard: fall back to cumprod(1-hazard)
         return hazard_to_survival(hazard)
 
     def forward(
@@ -155,6 +166,7 @@ class PredictionHead(nn.Module):
         hazard_logits = self.fc_hazard(x)
         pmf_logits = self.fc_pmf(x)
         risk = self.fc_risk(x).squeeze(-1)
+        weibull_params = self.fc_weibull(x)
         # p_high is the soft high-risk membership used by the soft_logrank loss
         # and by inference's KM grouping. Derived from the same fc_risk scalar
         # that Cox trains; under soft_logrank, gradient flows through sigmoid
@@ -163,7 +175,7 @@ class PredictionHead(nn.Module):
 
         hazard = logits_to_hazard(hazard_logits)
         pmf = F.softmax(pmf_logits.float(), dim=1)
-        survival = self._survival_for_active_loss(hazard, hazard_logits, pmf_logits)
+        survival = self._survival_for_active_loss(hazard, hazard_logits, pmf_logits, weibull_params)
 
         # Stable dict: every key is present in every mode, but only some are
         # trained/meaningful for the active loss.
@@ -171,12 +183,14 @@ class PredictionHead(nn.Module):
         #   deephit      -> pmf, survival, survival_time meaningful
         #   cox          -> risk meaningful (as log hazard ratio)
         #   soft_logrank -> risk meaningful (as logit); p_high = sigmoid(risk)
+        #   weibull      -> weibull_params [B,2], survival (analytic Weibull)
         return {
             "logits": hazard_logits,
             "hazard": hazard,
             "pmf_logits": pmf_logits,
             "pmf": pmf,
             "risk": risk,
+            "weibull_params": weibull_params,
             "survival": survival,
             "survival_time": survival_to_time(survival),
             "p_high": p_high,

@@ -28,6 +28,7 @@ _SURVIVAL_LOSS_TAGS = {
     "cox": "CoxPH",
     "deephit": "DeepHit",
     "soft_logrank": "SoftLogRank",
+    "weibull": "Weibull",
 }
 
 
@@ -310,6 +311,9 @@ class BaseModel(L.LightningModule):
             loss_parts = {"total": loss, name: loss}
         elif name in ("mtlr", "bcesurv"):
             loss = self.criterion(y_hat["logits"], time_bin, event)
+            loss_parts = {"total": loss, name: loss}
+        elif name == "weibull":
+            loss = self.criterion(y_hat["weibull_params"], continuous_time, event)
             loss_parts = {"total": loss, name: loss}
         else:
             raise ValueError(f"Unexpected survival_loss_name: {name!r}")

@@ -421,6 +421,22 @@ class BCESurvLoss(nn.Module):
         return self._loss(logits, time.to(torch.int64).view(-1), event.to(torch.float32).view(-1))
 
 
+class WeibullLoss(nn.Module):
+    """Parametric Weibull AFT via torchsurv. Input: log_params [B,2], time, event."""
+    def __init__(self, reduction: str = "mean"):
+        super().__init__()
+        from torchsurv.loss import weibull
+        self._fn = weibull.neg_log_likelihood_weibull
+        self.reduction = reduction
+
+    def forward(self, log_params, time, event):
+        ev = event.to(torch.bool).view(-1)
+        if ev.sum() == 0:
+            return log_params.sum() * 0.0
+        return self._fn(log_params, ev, time.float().view(-1),
+                        reduction=self.reduction, checks=False)
+
+
 class SoftLogRankLoss(nn.Module):
     """Differentiable Mantel-Cox log-rank loss + weak group-balance penalty.
 
@@ -521,9 +537,11 @@ def build_survival_criterion(cfg, num_time_bins: int):
         return name, MTLRLoss()
     if name == "bcesurv":
         return name, BCESurvLoss()
+    if name == "weibull":
+        return name, WeibullLoss(reduction=cfg.get("reduction", "mean"))
     raise ValueError(
         f"Unknown survival_loss.name: {name!r}. Expected one of: "
-        "nll, cox, deephit, soft_logrank, pmf, mtlr, bcesurv."
+        "nll, cox, deephit, soft_logrank, pmf, mtlr, bcesurv, weibull."
     )
 
 
