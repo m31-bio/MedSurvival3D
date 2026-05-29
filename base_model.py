@@ -29,6 +29,9 @@ _SURVIVAL_LOSS_TAGS = {
     "deephit": "DeepHit",
     "soft_logrank": "SoftLogRank",
     "weibull": "Weibull",
+    "pmf": "PMF",
+    "mtlr": "MTLR",
+    "bcesurv": "BCESurv",
 }
 
 
@@ -557,7 +560,7 @@ class BaseModel(L.LightningModule):
         loss_name = self.survival_loss_name
         landmark_bin_idx = (
             self._resolve_stratification_landmark_bin()
-            if loss_name in ("nll", "deephit")
+            if loss_name not in ("cox", "soft_logrank")
             else None
         )
 
