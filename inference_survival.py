@@ -286,45 +286,18 @@ def _mean_se(values):
 
 
 def km_survival_at(times, events, horizon):
-    times = np.asarray(times, dtype=float)
-    events = np.asarray(events, dtype=bool)
-    if len(times) == 0:
-        return float("nan"), float("nan")
-
-    survival = 1.0
-    greenwood = 0.0
-    for event_time in sorted(set(times[events & (times <= horizon)])):
-        at_risk = np.sum(times >= event_time)
-        observed = np.sum((times == event_time) & events)
-        if at_risk <= 0:
-            continue
-        survival *= 1.0 - observed / at_risk
-        if at_risk > observed:
-            greenwood += observed / (at_risk * (at_risk - observed))
-    se = survival * math.sqrt(greenwood) if greenwood > 0 else 0.0
-    return float(survival), float(se)
+    """KM survival probability at a single horizon via lifelines."""
+    from lifelines import KaplanMeierFitter
+    kmf = KaplanMeierFitter().fit(np.asarray(times, float), np.asarray(events).astype(int))
+    return float(kmf.predict(float(horizon)))
 
 
 def km_step_curve(times, events):
-    times = np.asarray(times, dtype=float)
-    events = np.asarray(events, dtype=bool)
-    if len(times) == 0:
-        return np.array([0.0]), np.array([np.nan])
-    event_times = sorted(set(times[events]))
-    x = [0.0]
-    y = [1.0]
-    survival = 1.0
-    for event_time in event_times:
-        at_risk = np.sum(times >= event_time)
-        observed = np.sum((times == event_time) & events)
-        if at_risk <= 0:
-            continue
-        x.extend([event_time, event_time])
-        y.extend([survival, survival * (1.0 - observed / at_risk)])
-        survival = y[-1]
-    x.append(float(np.max(times)))
-    y.append(survival)
-    return np.asarray(x), np.asarray(y)
+    """Return (timeline, survival) arrays of the KM step curve via lifelines."""
+    from lifelines import KaplanMeierFitter
+    kmf = KaplanMeierFitter().fit(np.asarray(times, float), np.asarray(events).astype(int))
+    sf = kmf.survival_function_
+    return sf.index.to_numpy(), sf.iloc[:, 0].to_numpy()
 
 
 def compute_logrank_stat(times, events, group_high):
@@ -518,7 +491,7 @@ def landmark_rows(outputs, landmark_map, cutoff):
         for year, idx in sorted(landmark_map.items()):
             pred_risk = 1.0 - outputs["survival"][mask, idx]
             pred_mean, pred_se = _mean_se(pred_risk)
-            km_survival, km_survival_se = km_survival_at(
+            km_survival = km_survival_at(
                 outputs["time"][mask],
                 outputs["event"][mask],
                 year,
@@ -530,7 +503,6 @@ def landmark_rows(outputs, landmark_map, cutoff):
                     "predicted_mean_risk": pred_mean,
                     "predicted_se": pred_se,
                     "km_risk": float(1.0 - km_survival) if not math.isnan(km_survival) else float("nan"),
-                    "km_se": km_survival_se,
                     "n_patients": int(np.sum(mask)),
                     "n_events": int(np.sum(outputs["event"][mask])),
                 }
@@ -546,7 +518,6 @@ def write_landmark_risks(rows, path):
         "predicted_mean_risk",
         "predicted_se",
         "km_risk",
-        "km_se",
         "n_patients",
         "n_events",
     ]
@@ -564,12 +535,11 @@ def plot_landmark_bars(rows, path):
     pred = [row["predicted_mean_risk"] for row in plot_rows]
     pred_se = [row["predicted_se"] for row in plot_rows]
     km = [row["km_risk"] for row in plot_rows]
-    km_se = [row["km_se"] for row in plot_rows]
 
     path.parent.mkdir(parents=True, exist_ok=True)
     plt.figure(figsize=(6, 4))
     plt.bar(x - width / 2, pred, width, yerr=pred_se, label="Predicted", color="#4c78a8", capsize=4)
-    plt.bar(x + width / 2, km, width, yerr=km_se, label="KM actual", color="#f58518", capsize=4)
+    plt.bar(x + width / 2, km, width, label="KM actual", color="#f58518", capsize=4)
     plt.xticks(x, [f"{year}y" for year in years])
     plt.ylabel("Cumulative recurrence risk")
     plt.ylim(0, 1)
