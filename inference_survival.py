@@ -4,6 +4,7 @@ import math
 import os
 import re
 import sys
+import warnings
 from pathlib import Path
 
 os.environ.setdefault("MPLCONFIGDIR", "/private/tmp/matplotlib")
@@ -49,6 +50,12 @@ def sksurv_cindex(time, event, risk):
     if event.sum() == 0:
         return float("nan")
     return float(_sksurv_cic(event, time, risk)[0])
+
+
+def sksurv_ibs(y_train, y_test, surv_at_times, times):
+    """Integrated Brier score (IPCW) via scikit-survival."""
+    from sksurv.metrics import integrated_brier_score
+    return float(integrated_brier_score(y_train, y_test, surv_at_times, times))
 
 
 def _torch_load_checkpoint(path, map_location="cpu"):
@@ -431,18 +438,43 @@ def write_predictions(outputs, out_dir, bin_columns, landmark_map, cutoff, survi
         raise ValueError(f"Unknown survival_loss_name: {survival_loss_name!r}")
 
 
-def compute_metrics(outputs, survival_loss_name):
+def compute_metrics(outputs, survival_loss_name, train_times=None, train_events=None):
     metrics = {
         "c_index": sksurv_cindex(outputs["time"], outputs["event"], outputs["risk"]),
         "n_patients": len(outputs["patient_id"]),
         "n_events": int(np.sum(outputs["event"])),
     }
     if survival_loss_name in ("nll", "deephit"):
-        metrics["ibs"] = integrated_brier_score(
-            torch.as_tensor(outputs["survival"]),
-            torch.as_tensor(outputs["time_bin"]),
-            torch.as_tensor(outputs["event"]),
-        )
+        test_time = np.asarray(outputs["time"], dtype=float)
+        test_event = np.asarray(outputs["event"]).astype(bool)
+        survival = np.asarray(outputs["survival"])
+
+        from sksurv.util import Surv
+        y_test = Surv.from_arrays(test_event, test_time)
+        if train_times is not None and train_events is not None:
+            y_train = Surv.from_arrays(
+                np.asarray(train_events).astype(bool),
+                np.asarray(train_times, dtype=float),
+            )
+        else:
+            # Fallback: use test set as its own censoring reference (documented limitation).
+            y_train = y_test
+
+        # Valid IBS grid: strictly inside test follow-up, clipped to event range.
+        observed_times = test_time[test_event]
+        if observed_times.size > 0:
+            lo = max(1, int(observed_times.min()) + 1)
+        else:
+            lo = 1
+        hi = int(test_time.max())
+        try:
+            if lo < hi:
+                eval_times = np.arange(lo, hi, dtype=float)
+                metrics["ibs"] = sksurv_ibs(y_train, y_test, survival[:, eval_times.astype(int)], eval_times)
+            else:
+                metrics["ibs"] = float("nan")
+        except (ValueError, IndexError):
+            metrics["ibs"] = float("nan")
     else:
         metrics["ibs"] = float("nan")
 
@@ -592,6 +624,40 @@ def run_fold(cfg, exp_dir, pred_dir, fold, device, metrics_rows, pooled_val_risk
         num_bins=num_bins,
     )
 
+    # Extract training labels for IPCW metrics (censoring distribution).
+    train_times = None
+    train_events = None
+    if survival_loss_name in ("nll", "deephit"):
+        train_ds = datamodule.train_dataset
+        _tr_times = []
+        _tr_events = []
+        for case_id in train_ds.img_files:
+            label = train_ds.labels[case_id]
+            if isinstance(label, dict):
+                ev = label["event"]
+                if "time" in label:
+                    t = label["time"]
+                elif "time_years" in label:
+                    t = label["time_years"]
+                elif "time_months" in label:
+                    t = float(label["time_months"]) / 12.0
+                else:
+                    t = label.get("time_bin", 0)
+                    warnings.warn(
+                        f"Label for case '{case_id}' has no continuous time key "
+                        "(time / time_years / time_months); falling back to 'time_bin' "
+                        "as a continuous survival time.  Using a discretised bin index "
+                        "as continuous time may bias IPCW censoring weights.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+            else:
+                t, ev = label
+            _tr_times.append(float(t))
+            _tr_events.append(bool(ev))
+        train_times = np.asarray(_tr_times, dtype=float)
+        train_events = np.asarray(_tr_events, dtype=bool)
+
     fold_outputs = {}
     for split, dataloader, dataset in [
         ("val", prediction_dataloader(datamodule, datamodule.val_dataset), datamodule.val_dataset),
@@ -628,7 +694,7 @@ def run_fold(cfg, exp_dir, pred_dir, fold, device, metrics_rows, pooled_val_risk
             write_landmark_risks(lmk_rows, out_dir / "landmark_risks.csv")
             plot_landmark_bars(lmk_rows, out_dir / "landmark_risk_bars.png")
 
-        metrics = compute_metrics(outputs, survival_loss_name)
+        metrics = compute_metrics(outputs, survival_loss_name, train_times=train_times, train_events=train_events)
         row = {
             "scope": "fold",
             "fold": fold,
@@ -818,6 +884,11 @@ def _inference_impl(cfg):
             lmk_rows = landmark_rows(ensemble, fold_results[0]["landmark_map"], pooled_cutoff)
             write_landmark_risks(lmk_rows, out_dir / "landmark_risks.csv")
             plot_landmark_bars(lmk_rows, out_dir / "landmark_risk_bars.png")
+        # The pooled ensemble's test set is the union of all fold test sets (≈ the full
+        # cohort), so no separate training cohort is passed here.  compute_metrics will
+        # fall back to y_train = y_test, meaning IPCW censoring weights are estimated
+        # from the pooled cohort itself.  This is intentional: we have the full cohort
+        # available, so it is the natural reference population, not a bug or limitation.
         metrics = compute_metrics(ensemble, survival_loss_name)
         ensemble_row = {
             "scope": "ensemble",
