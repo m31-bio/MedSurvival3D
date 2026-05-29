@@ -7,34 +7,14 @@ import torch.nn as nn
 
 
 def concordance_index(event_times, predicted_scores, event_observed):
-    """Calculate C-index, where higher predicted scores mean higher risk."""
-    if isinstance(event_times, torch.Tensor):
-        event_times = event_times.detach().cpu().numpy()
-    if isinstance(predicted_scores, torch.Tensor):
-        predicted_scores = predicted_scores.detach().cpu().numpy()
-    if isinstance(event_observed, torch.Tensor):
-        event_observed = event_observed.detach().cpu().numpy()
-
-    n = len(event_times)
-    concordant = 0
-    permissible = 0
-
-    for i in range(n):
-        if event_observed[i] == 0:
-            continue
-        for j in range(n):
-            if i == j:
-                continue
-            if event_times[i] < event_times[j]:
-                permissible += 1
-                if predicted_scores[i] > predicted_scores[j]:
-                    concordant += 1
-                elif predicted_scores[i] == predicted_scores[j]:
-                    concordant += 0.5
-
-    if permissible == 0:
+    """Harrell C-index via torchsurv. Higher score = higher risk."""
+    from torchsurv.metrics.cindex import ConcordanceIndex
+    est = torch.as_tensor(predicted_scores).float().view(-1)
+    ev = torch.as_tensor(event_observed).bool().view(-1)
+    t = torch.as_tensor(event_times).float().view(-1)
+    if ev.sum() == 0:
         return 0.5
-    return concordant / permissible
+    return float(ConcordanceIndex()(est, ev, t))
 
 
 def _binary_roc_auc(scores: torch.Tensor, target: torch.Tensor) -> float:
