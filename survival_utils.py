@@ -612,7 +612,7 @@ def derive_stratification_scores(loss_name, risks, survival_curves, landmark_bin
     """Return per-sample scalar stratification scores for a survival loss.
 
     - cox / soft_logrank: returns `risks` unchanged (log-hazard or sigmoid logit).
-    - nll / deephit: returns 1 - survival_curves[:, landmark_bin_idx].
+    - nll / deephit / pmf / mtlr / bcesurv / pchazard / weibull: returns 1 - survival_curves[:, landmark_bin_idx].
 
     Raises ValueError for unrecognized loss names.
     """
@@ -620,7 +620,7 @@ def derive_stratification_scores(loss_name, risks, survival_curves, landmark_bin
         if risks is None:
             raise ValueError(f"{loss_name} requires `risks` array")
         return _np.asarray(risks, dtype=float)
-    if loss_name in ("nll", "deephit"):
+    if loss_name in ("nll", "deephit", "pmf", "mtlr", "bcesurv", "pchazard", "weibull"):
         if survival_curves is None:
             raise ValueError(f"{loss_name} requires `survival_curves` array")
         curves = _np.asarray(survival_curves, dtype=float)

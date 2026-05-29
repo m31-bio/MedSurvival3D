@@ -7,7 +7,44 @@ import torch.nn.functional as F
 from survival_utils import hazard_to_survival, logits_to_hazard, survival_to_time
 
 
-_VALID_LOSSES = ("nll", "cox", "deephit", "soft_logrank")
+_VALID_LOSSES = ("nll", "cox", "deephit", "soft_logrank", "pmf", "mtlr", "bcesurv", "pchazard", "weibull")
+
+
+def _nll_surv(phi: torch.Tensor) -> torch.Tensor:
+    return torch.cumprod(1 - torch.sigmoid(phi), dim=1)
+
+
+def _pmf_surv(phi: torch.Tensor) -> torch.Tensor:
+    return 1 - F.softmax(phi, dim=1).cumsum(1)
+
+
+def _bce_surv(phi: torch.Tensor) -> torch.Tensor:
+    return torch.sigmoid(phi)
+
+
+def _mtlr_surv(phi: torch.Tensor) -> torch.Tensor:
+    # Replicate pycox MTLR.predict_pmf + PMFBase.predict_surv:
+    #   g = cumsum_reverse(phi)                  [B, K]
+    #   pmf = pad_col(g).softmax(1)[:, :-1]     [B, K]
+    #   surv = 1 - pmf.cumsum(1)                [B, K]
+    from pycox.models.utils import cumsum_reverse, pad_col
+    g = cumsum_reverse(phi, dim=1)
+    pmf = pad_col(g).softmax(1)[:, :-1]
+    return 1 - pmf.cumsum(1)
+
+
+LOGITS_TO_SURVIVAL = {
+    "nll": _nll_surv,
+    "pmf": _pmf_surv,
+    "deephit": _pmf_surv,
+    "bcesurv": _bce_surv,
+    "mtlr": _mtlr_surv,
+}
+
+
+def logits_to_survival(name: str, phi: torch.Tensor) -> torch.Tensor:
+    """Derive a survival curve from raw logits for the given loss name."""
+    return LOGITS_TO_SURVIVAL[name](phi)
 
 
 class PredictionHead(nn.Module):
@@ -85,11 +122,15 @@ class PredictionHead(nn.Module):
     def _survival_for_active_loss(
         self,
         hazard: torch.Tensor,
-        pmf: torch.Tensor,
+        hazard_logits: torch.Tensor,
+        pmf_logits: torch.Tensor,
     ) -> torch.Tensor:
-        if self.survival_loss_name == "deephit":
-            return (1.0 - torch.cumsum(pmf, dim=1)).clamp(min=0.0, max=1.0)
-        # nll and cox both fall back to cumprod(1-hazard).
+        name = self.survival_loss_name
+        if name in ("pmf", "deephit"):
+            return logits_to_survival(name, pmf_logits)
+        if name in ("bcesurv", "mtlr", "nll"):
+            return logits_to_survival(name, hazard_logits)
+        # cox / soft_logrank / pchazard / weibull: fall back to cumprod(1-hazard)
         return hazard_to_survival(hazard)
 
     def forward(
@@ -122,7 +163,7 @@ class PredictionHead(nn.Module):
 
         hazard = logits_to_hazard(hazard_logits)
         pmf = F.softmax(pmf_logits.float(), dim=1)
-        survival = self._survival_for_active_loss(hazard, pmf)
+        survival = self._survival_for_active_loss(hazard, hazard_logits, pmf_logits)
 
         # Stable dict: every key is present in every mode, but only some are
         # trained/meaningful for the active loss.
