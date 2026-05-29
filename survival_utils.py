@@ -334,63 +334,17 @@ def group_balance_penalty(
 
 
 class NLLSurvLoss(nn.Module):
-    """
-    Negative log-likelihood loss for discrete-time survival prediction.
-
-    ``time`` is expected to contain 0-indexed discrete time-bin indices, and
-    ``event`` should be 1 for observed events and 0 for censored observations.
-    """
+    """pycox logistic-hazard NLL. Input: raw hazard logits, int time bins, event."""
 
     def __init__(self, reduction: str = "mean"):
         super().__init__()
-        if reduction not in {"mean", "sum", "none"}:
-            raise ValueError("reduction must be one of: 'mean', 'sum', 'none'")
-        self.reduction = reduction
+        from pycox.models.loss import NLLLogistiHazardLoss
+        self._loss = NLLLogistiHazardLoss(reduction=reduction)
 
-    def forward(
-        self,
-        logits: torch.Tensor,
-        time: torch.Tensor,
-        event: torch.Tensor,
-    ) -> torch.Tensor:
-        batch_size, num_time_bins = logits.shape
-
-        hazard = logits_to_hazard(logits).clamp(min=1e-7, max=1.0 - 1e-7)
-        survival = hazard_to_survival(hazard)
-        survival_padded = torch.cat(
-            [
-                torch.ones(
-                    batch_size,
-                    1,
-                    device=logits.device,
-                    dtype=logits.dtype,
-                ),
-                survival,
-            ],
-            dim=1,
-        )
-
-        y_time = time.to(device=logits.device, dtype=torch.int64).view(-1, 1)
-        y_event = event.to(device=logits.device, dtype=logits.dtype).view(-1, 1)
-        y_time = torch.clamp(y_time, 0, num_time_bins - 1)
-
-        s_prev = torch.gather(survival_padded, 1, y_time).clamp(min=1e-7)
-        h_this = torch.gather(hazard, 1, y_time).clamp(min=1e-7)
-        log_lik_uncensored = torch.log(s_prev) + torch.log(h_this)
-
-        y_time_next = torch.clamp(y_time + 1, 0, num_time_bins)
-        s_this = torch.gather(survival_padded, 1, y_time_next).clamp(min=1e-7)
-        log_lik_censored = torch.log(s_this)
-
-        neg_log_lik = -(
-            y_event * log_lik_uncensored + (1.0 - y_event) * log_lik_censored
-        )
-
-        if self.reduction == "mean":
-            return neg_log_lik.mean()
-        if self.reduction == "sum":
-            return neg_log_lik.sum()
-        return neg_log_lik.squeeze(1)
+    def forward(self, logits, time, event):
+        idx = time.to(torch.int64).view(-1)
+        ev = event.to(torch.float32).view(-1)
+        return self._loss(logits, idx, ev)
 
 
 class CoxPHLoss(nn.Module):
