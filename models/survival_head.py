@@ -133,6 +133,7 @@ class PredictionHead(nn.Module):
         return {
             "logits": hazard_logits,
             "hazard": hazard,
+            "pmf_logits": pmf_logits,
             "pmf": pmf,
             "risk": risk,
             "survival": survival,

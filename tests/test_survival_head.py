@@ -92,6 +92,15 @@ def test_p_high_present_in_all_modes_and_matches_sigmoid_of_risk():
         assert torch.allclose(torch.sigmoid(out["risk"]), out["p_high"], atol=1e-6)
 
 
+def test_pmf_logits_present_and_raw():
+    import torch
+    from models.survival_head import SurvivalHead
+    head = SurvivalHead(input_dim=32, num_time_bins=10, survival_loss_name="deephit")
+    out = head(torch.randn(4, 32))
+    assert "pmf_logits" in out and out["pmf_logits"].shape == (4, 10)
+    assert torch.allclose(out["pmf"], torch.softmax(out["pmf_logits"].float(), dim=1), atol=1e-6)
+
+
 if __name__ == "__main__":
     test_nll_mode_shapes()
     test_deephit_mode_shapes_and_pmf_sums_to_one()
@@ -99,4 +108,5 @@ if __name__ == "__main__":
     test_survival_is_loss_appropriate()
     test_soft_logrank_mode_shapes()
     test_p_high_present_in_all_modes_and_matches_sigmoid_of_risk()
+    test_pmf_logits_present_and_raw()
     print("OK")
