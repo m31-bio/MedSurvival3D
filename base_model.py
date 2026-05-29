@@ -305,6 +305,12 @@ class BaseModel(L.LightningModule):
                 event,
             )
             loss_parts = {"total": total, name: total, **components}
+        elif name == "pmf":
+            loss = self.criterion(y_hat["pmf_logits"], time_bin, event)
+            loss_parts = {"total": loss, name: loss}
+        elif name in ("mtlr", "bcesurv"):
+            loss = self.criterion(y_hat["logits"], time_bin, event)
+            loss_parts = {"total": loss, name: loss}
         else:
             raise ValueError(f"Unexpected survival_loss_name: {name!r}")
 

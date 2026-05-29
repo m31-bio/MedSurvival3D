@@ -388,6 +388,39 @@ class DeepHitLoss(nn.Module):
         return self._loss(pmf_logits, idx, ev.to(pmf_logits.dtype), rank_mat)
 
 
+class PMFLoss(nn.Module):
+    """pycox PMF NLL. Input: raw pmf logits, int time bins, event."""
+    def __init__(self):
+        super().__init__()
+        from pycox.models.loss import NLLPMFLoss
+        self._loss = NLLPMFLoss()
+
+    def forward(self, pmf_logits, time, event):
+        return self._loss(pmf_logits, time.to(torch.int64).view(-1), event.to(torch.float32).view(-1))
+
+
+class MTLRLoss(nn.Module):
+    """pycox MTLR NLL. Input: raw logits [B,K], int time bins, event."""
+    def __init__(self):
+        super().__init__()
+        from pycox.models.loss import NLLMTLRLoss
+        self._loss = NLLMTLRLoss()
+
+    def forward(self, logits, time, event):
+        return self._loss(logits, time.to(torch.int64).view(-1), event.to(torch.float32).view(-1))
+
+
+class BCESurvLoss(nn.Module):
+    """pycox BCESurv loss. Input: raw logits [B,K], int time bins, event."""
+    def __init__(self):
+        super().__init__()
+        from pycox.models.loss import BCESurvLoss as _BCE
+        self._loss = _BCE()
+
+    def forward(self, logits, time, event):
+        return self._loss(logits, time.to(torch.int64).view(-1), event.to(torch.float32).view(-1))
+
+
 class SoftLogRankLoss(nn.Module):
     """Differentiable Mantel-Cox log-rank loss + weak group-balance penalty.
 
@@ -482,9 +515,15 @@ def build_survival_criterion(cfg, num_time_bins: int):
             min_frac=float(cfg.get("min_frac", 0.20)),
             max_frac=float(cfg.get("max_frac", 0.80)),
         )
+    if name == "pmf":
+        return name, PMFLoss()
+    if name == "mtlr":
+        return name, MTLRLoss()
+    if name == "bcesurv":
+        return name, BCESurvLoss()
     raise ValueError(
         f"Unknown survival_loss.name: {name!r}. Expected one of: "
-        "nll, cox, deephit, soft_logrank."
+        "nll, cox, deephit, soft_logrank, pmf, mtlr, bcesurv."
     )
 
 
