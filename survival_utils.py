@@ -17,46 +17,6 @@ def concordance_index(event_times, predicted_scores, event_observed):
     return float(ConcordanceIndex()(est, ev, t))
 
 
-def _binary_roc_auc(scores: torch.Tensor, target: torch.Tensor) -> float:
-    scores = scores.detach().float().view(-1)
-    target = target.detach().bool().view(-1)
-
-    num_pos = target.sum()
-    num_neg = (~target).sum()
-    if scores.numel() == 0 or num_pos == 0 or num_neg == 0:
-        return float("nan")
-
-    sorted_scores, order = torch.sort(scores)
-    sorted_ranks = torch.arange(
-        1,
-        scores.numel() + 1,
-        device=scores.device,
-        dtype=torch.float32,
-    )
-
-    # Average ranks for tied prediction scores.
-    tied_ranks = sorted_ranks.clone()
-    _, counts = torch.unique_consecutive(
-        sorted_scores,
-        return_counts=True,
-    )
-    start = 0
-    for count in counts.tolist():
-        end = start + count
-        if count > 1:
-            tied_ranks[start:end] = sorted_ranks[start:end].mean()
-        start = end
-
-    ranks = torch.empty_like(tied_ranks)
-    ranks[order] = tied_ranks
-    pos_rank_sum = ranks[target].sum()
-
-    auc = (
-        pos_rank_sum - num_pos.float() * (num_pos.float() + 1.0) / 2.0
-    ) / (num_pos.float() * num_neg.float())
-    return float(auc.cpu().item())
-
-
 def time_dependent_auc(
     survival,
     event_times,
