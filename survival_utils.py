@@ -92,132 +92,70 @@ def time_dependent_auc(
     return out
 
 
+def _valid_time_grid(event_times, event_observed, num_bins):
+    """Return integer time indices suitable for torchsurv BrierScore evaluation."""
+    t = torch.as_tensor(event_times).long().view(-1)
+    e = torch.as_tensor(event_observed).bool().view(-1)
+    lo = max(1, int(t[e].min()) + 1) if e.any() else 1
+    hi = min(int(t.max()), num_bins - 1)
+    return torch.arange(lo, max(lo + 1, hi))
+
+
+def _ibs_torchsurv(survival, event_times, event_observed, times, weight=None, weight_new_time=None):
+    """Shared helper: integrated Brier score via torchsurv over integer time grid.
+
+    weight=None -> uniform weights (plain, unweighted).
+    Pass explicit IPCW weights for the IPCW variant.
+    torchsurv BrierScore does NOT apply IPCW automatically; weight=None
+    is internally converted to all-ones by torchsurv._update_brier_score_weight.
+    """
+    from torchsurv.metrics.brier_score import BrierScore
+    s = torch.as_tensor(survival).float()
+    t = torch.as_tensor(event_times).float().view(-1)
+    e = torch.as_tensor(event_observed).bool().view(-1)
+    est = s[:, times]                                   # [n, len(times)]
+    bs = BrierScore()
+    bs(est, e, t, new_time=times.float(), weight=weight, weight_new_time=weight_new_time)
+    return float(bs.integral())
+
+
 def integrated_brier_score(survival, event_times, event_observed):
-    """
-    Calculate an unweighted discrete-time integrated Brier score.
-
-    For each time bin, censored samples are used only while their survival
-    status is known. Lower values indicate better calibrated survival curves.
-    """
-    if not isinstance(survival, torch.Tensor):
-        survival = torch.as_tensor(survival)
-    if not isinstance(event_times, torch.Tensor):
-        event_times = torch.as_tensor(event_times)
-    if not isinstance(event_observed, torch.Tensor):
-        event_observed = torch.as_tensor(event_observed)
-
-    survival = survival.detach().float()
-    event_times = event_times.detach().long().view(-1)
-    event_observed = event_observed.detach().bool().view(-1)
-
+    """Unweighted integrated Brier score via torchsurv (weight=1 for all samples)."""
+    survival = torch.as_tensor(survival).float()
     if survival.numel() == 0:
         return 0.0
-
-    num_time_bins = survival.shape[1]
-    brier_scores = []
-
-    for time_idx in range(num_time_bins):
-        known_alive = event_times > time_idx
-        known_event = event_observed & (event_times <= time_idx)
-        known = known_alive | known_event
-
-        if not torch.any(known):
-            continue
-
-        target = known_alive[known].to(dtype=survival.dtype, device=survival.device)
-        pred = survival[known, time_idx]
-        brier_scores.append(torch.mean((target - pred) ** 2))
-
-    if not brier_scores:
-        return 0.0
-
-    return torch.stack(brier_scores).mean().item()
-
-
-def _censoring_survival_km(event_times, event_observed, num_time_bins, eps=1e-7):
-    """
-    Estimate the censoring survival curve G(t) with Kaplan-Meier.
-
-    In this curve, censored observations are treated as the event of interest.
-    """
-    event_times = event_times.long().view(-1)
-    event_observed = event_observed.bool().view(-1)
-    censored = ~event_observed
-
-    censoring_survival = torch.empty(
-        num_time_bins,
-        device=event_times.device,
-        dtype=torch.float32,
-    )
-    survival_prob = torch.tensor(1.0, device=event_times.device)
-
-    for time_idx in range(num_time_bins):
-        at_risk = event_times >= time_idx
-        num_at_risk = at_risk.sum().float()
-
-        if num_at_risk > 0:
-            num_censored = (at_risk & censored & (event_times == time_idx)).sum().float()
-            survival_prob = survival_prob * (1.0 - num_censored / num_at_risk)
-
-        censoring_survival[time_idx] = survival_prob.clamp_min(eps)
-
-    return censoring_survival
+    times = _valid_time_grid(event_times, event_observed, survival.shape[1])
+    try:
+        return _ibs_torchsurv(survival, event_times, event_observed, times, weight=None)
+    except Exception:
+        return float("nan")
 
 
 def integrated_brier_score_ipcw(survival, event_times, event_observed, eps=1e-7):
+    """IPCW integrated Brier score via torchsurv.
+
+    Uses torchsurv.stats.ipcw.get_ipcw to compute the inverse probability of
+    censoring weights from the KM censoring distribution, then passes them
+    explicitly to BrierScore.  weight=None would give the unweighted (plain)
+    score; we pass IPCW weights so this function is genuinely different from
+    integrated_brier_score on censored data.
     """
-    Calculate an IPCW weighted discrete-time integrated Brier score.
-
-    IPCW uses a Kaplan-Meier estimate of the censoring distribution so censored
-    samples that become unknown after censoring are represented by the remaining
-    comparable observations. Lower values indicate better calibrated curves.
-    """
-    if not isinstance(survival, torch.Tensor):
-        survival = torch.as_tensor(survival)
-    if not isinstance(event_times, torch.Tensor):
-        event_times = torch.as_tensor(event_times)
-    if not isinstance(event_observed, torch.Tensor):
-        event_observed = torch.as_tensor(event_observed)
-
-    survival = survival.detach().float()
-    event_times = event_times.detach().long().view(-1).to(survival.device)
-    event_observed = event_observed.detach().bool().view(-1).to(survival.device)
-
+    from torchsurv.stats.ipcw import get_ipcw
+    survival = torch.as_tensor(survival).float()
     if survival.numel() == 0:
         return 0.0
-
-    num_time_bins = survival.shape[1]
-    censoring_survival = _censoring_survival_km(
-        event_times,
-        event_observed,
-        num_time_bins,
-        eps=eps,
-    )
-    event_times_clamped = torch.clamp(event_times, 0, num_time_bins - 1)
-    brier_scores = []
-
-    for time_idx in range(num_time_bins):
-        observed_event = event_observed & (event_times <= time_idx)
-        known_alive = event_times > time_idx
-
-        weights = torch.zeros(
-            survival.shape[0],
-            device=survival.device,
-            dtype=survival.dtype,
+    t = torch.as_tensor(event_times).float().view(-1)
+    e = torch.as_tensor(event_observed).bool().view(-1)
+    times = _valid_time_grid(event_times, event_observed, survival.shape[1])
+    try:
+        ipcw_at_time = get_ipcw(e, t)
+        ipcw_at_new_time = get_ipcw(e, t, times.float())
+        return _ibs_torchsurv(
+            survival, event_times, event_observed, times,
+            weight=ipcw_at_time, weight_new_time=ipcw_at_new_time,
         )
-        weights[observed_event] = (
-            1.0 / censoring_survival[event_times_clamped[observed_event]]
-        )
-        weights[known_alive] = 1.0 / censoring_survival[time_idx]
-
-        target = known_alive.to(dtype=survival.dtype, device=survival.device)
-        pred = survival[:, time_idx]
-        brier_scores.append(torch.mean(weights * (target - pred) ** 2))
-
-    if not brier_scores:
-        return 0.0
-
-    return torch.stack(brier_scores).mean().item()
+    except Exception:
+        return float("nan")
 
 
 def logits_to_hazard(logits: torch.Tensor) -> torch.Tensor:
