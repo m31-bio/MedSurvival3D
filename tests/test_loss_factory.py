@@ -2,6 +2,7 @@
 
 import sys
 from pathlib import Path
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -92,6 +93,14 @@ def test_soft_logrank_reads_hyperparameters():
     assert fn.lambda_balance == 0.02
     assert fn.min_frac == 0.25
     assert fn.max_frac == 0.75
+
+
+@pytest.mark.parametrize("name", [
+    "nll", "cox", "deephit", "soft_logrank", "pmf", "mtlr", "bcesurv", "weibull", "pchazard",
+])
+def test_all_names_build(name):
+    nm, crit = build_survival_criterion({"name": name}, num_time_bins=10)
+    assert nm == name and crit is not None
 
 
 if __name__ == "__main__":

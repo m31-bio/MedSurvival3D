@@ -411,6 +411,18 @@ def build_survival_criterion(cfg, num_time_bins: int):
 
     ``cfg`` is the OmegaConf/dict block under ``model.survival_loss``, or
     ``None`` (in which case the default ``{name: 'nll'}`` is used).
+
+    Supported names and their hyperparameters:
+      - ``nll``          — pycox logistic-hazard NLL. Opts: reduction (default "mean").
+      - ``cox``          — Cox partial likelihood (Efron ties). Opts: reduction (default "mean").
+      - ``deephit``      — Single-event DeepHit. Opts: alpha (default 0.2), sigma (default 0.1).
+      - ``soft_logrank`` — Differentiable log-rank + balance penalty.
+                           Opts: lambda_balance (0.01), min_frac (0.20), max_frac (0.80).
+      - ``pmf``          — pycox PMF NLL. No extra opts.
+      - ``mtlr``         — pycox MTLR NLL. No extra opts.
+      - ``bcesurv``      — pycox BCESurv loss. No extra opts.
+      - ``weibull``      — Parametric Weibull AFT. Opts: reduction (default "mean").
+      - ``pchazard``     — pycox piecewise-constant hazard NLL. No extra opts.
     """
     if cfg is None:
         cfg = {"name": "nll"}
