@@ -2,7 +2,7 @@
 data:
   module:
     _target_: datasets.coca_t1c_combined_b2nd.COCACombinedB2NDDataModule
-    name: Methylome_T1c_High_v_Low_v2
+    name: Methylome_T1c_MTLR
     data_root_dir: /home/jma/Documents/projects/safwat/coca_classifier_codebase/dataset/nnssl_preprocessed/Dataset019_UHN_Mayo_T1c_mask
     batch_size: 24
     train_transforms:
@@ -68,17 +68,13 @@ model:
   survival_landmark_years: ${fixed_survival_time_bins.cut_points_years}
   survival_smoothing_alpha: 0.05
   survival_loss:
-    name: deephit
-    alpha: 1.0                # HPARAM: [0.0, 1.0]. NLL<->ranking tradeoff:
-                              # total = alpha*NLL + (1-alpha)*ranking.
-                              # alpha=1 -> NLL only (ranking disabled); alpha=0 -> pure ranking.
-    sigma: 0.1                # HPARAM (log): [0.01, 1.0]. Ranking kernel temperature.
+    name: mtlr                # pycox multi-task logistic regression NLL. No tunable hyperparameters.
   save_preds: true
   result_plot: null
 trainer:
   logger:
     project: nnSSL_MethylomeRisk_Survival
-    name: t1c_mask
+    name: t1c_mtlr
   accumulate_grad_batches: 2
   max_epochs: 200
   sync_batchnorm: true

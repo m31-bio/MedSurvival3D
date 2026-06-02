@@ -59,10 +59,10 @@ model:
   survival_smoothing_alpha: 0.05
   survival_loss:
     name: deephit
-    alpha: 1.0
-    beta: 0.5
-    gamma: 0.0
-    sigma: 0.1
+    alpha: 1.0                # HPARAM: [0.0, 1.0]. NLL<->ranking tradeoff:
+                              # total = alpha*NLL + (1-alpha)*ranking.
+                              # alpha=1 -> NLL only (ranking disabled); alpha=0 -> pure ranking.
+    sigma: 0.1                # HPARAM (log): [0.01, 1.0]. Ranking kernel temperature.
   save_preds: true
   result_plot: null
 
