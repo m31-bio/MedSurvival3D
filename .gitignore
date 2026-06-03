@@ -101,3 +101,8 @@ datasets/GLvsL_1mm_cropped_160.py
 datasets/imagenet_resize.py
 
 !cli_configs/*
+
+# Agent / session state and test caches
+.hpo_agent/
+.pytest_cache/
+.remember/
