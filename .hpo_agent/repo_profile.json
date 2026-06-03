@@ -1,0 +1,256 @@
+{
+  "config_file": "cli_configs/train.yaml",
+  "config_format": "hydra",
+  "created_at": "2026-05-28T18:00:00Z",
+  "discovery_notes": "Hydra entry: main.py with @hydra.main(config_path=./cli_configs, config_name=train). hydra.run.dir=. and hydra.job.chdir=False, so the process cwd MUST be the SSL3D_survival repo root for the relative config_path and the cli_configs/* paths to resolve. Defaults compose order is [_self_, env, model, data]; because every group yaml uses '# @package _global_' and 'data' is LAST in the defaults list, the data yaml overrides _self_ AND model values (e.g. data yaml sets model.lr=5e-6 / optimizer=AdamW / finetune_method=full_sawtooth and data.cv.k=5, overriding train.yaml's _self_ lr=0.1/SGD/full and k=1). We therefore force data.cv.k=1 and data.module.fold=0 to pin a single fold, and pick data=methylome_t1c_combined_high_vs_low which selects survival_loss.name=deephit (alpha=1.0, beta=0.5, gamma=0.0, sigma=0.1 in survival_utils.DeepHitLoss). env=local and env=cluster both ship DKFZ-specific exp_dir/data_dir (/home/c306h/... and /dkfz/...) that don't exist on aihub2.uniseg, so exp_dir is force-overridden to a jma-writable path; env=cluster ALSO disables the progress bar, so env=local is preferred (with the exp_dir override). data_dir from the env yaml is unused by this survival pipeline. CRITICAL RUNNABILITY TRAPS: (1) model.chpt_path MUST be set: resenc_survival.yaml sets model.pretrained=True with model.chpt_path=null, and models/resenc.py:46-50 unconditionally calls load_pretrained_weights(model, chpt_path) -> torch.load(None) crash. The SSL-pretrained ResEnc checkpoint lives at .../SSL3D_classification/checkpoints/S3D/checkpoint_final.pth (852MB; its /S3D/ path matches the stem-conv handling branch in resenc.py). (2) seed MUST be left falsy (NOT in forced_overrides): main.py:19-22 sets cfg.trainer.deterministic=True whenever cfg.seed is truthy, and the 3D ResEncoder's avg_pool3d_backward_cuda has no deterministic CUDA kernel -> RuntimeError in the first loss.backward(). train.yaml defaults seed=False & trainer.deterministic=False, so omitting seed avoids the crash. Reproducibility tradeoff: this disables seed_everything across the sweep; the only way to keep seeding would be a code patch to torch.use_deterministic_algorithms(True, warn_only=True) / cfg.trainer.deterministic='warn' at main.py:22 (outside the frozen-source write scope). (3) model.save_preds MUST be false: base_model.on_validation_epoch_end (lines 739-785) calls the GLOBAL wandb.log({'Val Predictions': table}) whenever self.save_preds is true and trainer.is_global_zero. Under the smoke's structural fast_dev_run stage Lightning disables the loggers, so WandbLogger never calls wandb.init(), and that manual wandb.log raises 'You must call wandb.init() before wandb.log()'. Forcing save_preds=false skips the predictions-table logging entirely (the HPO objective needs only the scalar curves, which still flow through self.log -> CSV/wandb), removing the global-wandb init-order dependency and fixing the smoke. (Real full trials with an active logger do not hit this, which is why prior completed attempts trained fine; but pinning save_preds=false is the robust, smoke-safe and HPO-lean choice.) CHECKPOINTING: trainer.enable_checkpointing defaults False; main.py:44-49 strips the ModelCheckpoint callback when it is False, so no checkpoint files are written. We force enable_checkpointing=False and additionally lock trainer.callbacks.checkpoint.save_top_k=0 (belt-and-suspenders). EARLY STOPPING: the data yaml sets EarlyStopping on Val/C-index, mode=max, patience=30, min_delta=0.002 (left intact; it truncates runs after the C-index peak \u2014 observed post-peak val overfitting decay, but the per-epoch CSV still records the full trajectory up to the early-stop epoch). WANDB: runs log to project nnSSL_MethylomeRisk_Survival (set in the data yaml), entity aaronchoi6-m31, group=<UUID from make_group_name resolver>, run name template '<base>_fold_<fold>' with base default 't1c_mask'. The trial-phase agent should set trainer.logger.name=<trial_id> so each wandb run is locatable. METRICS SOURCE = csv_inject (NOT wandb_remote): main.py:78-86 injects a CSVLogger(save_dir=<csv_logger_dir>, name='', version='') alongside the wandb logger whenever trainer.csv_logger_dir is provided, producing a predictable <csv_logger_dir>/metrics.csv. This is preferred over reading wandb because the local MCP/orchestrator host has NO WANDB_API_KEY (mcp fetch_wandb_run is blocked locally with 'No API key configured'); the CSV file is on the remote training host and is read directly over SSH \u2014 deterministic and credential-free. NOTE on override syntax: Hydra struct mode is enforced at compose time (the onboarding smoke proved bare 'trainer.fast_dev_run=true' fails with 'Key fast_dev_run is not in struct; use +trainer.fast_dev_run'). Since trainer.csv_logger_dir is likewise NOT a key in train.yaml's trainer block, it MUST be added with the '+' prefix: '+trainer.csv_logger_dir=<run_scratch>'. BEST-KNOWN CONFIG (attempt 20260528-091623, trial 3, the global best on this repo): {model.lr=5e-5, model.weight_decay=1e-3, model.survival_head_dropout=0} -> Val/C-index peak 0.71831 @ ep43 AND Val/logrank_chi2 peak 8.27 (p=0.004, significant) @ ep20 (stratification sub-goal met). KEY DURABLE LESSON for this dataset: model.survival_head_dropout >= 0.2 compresses the head's per-patient risk-score variance, collapsing the KM high/low split and destroying Val/logrank_chi2 (8.27 -> 2.46/NaN going 0 -> 0.2) while barely changing C-index \u2014 so for the stratification sub-objective prefer survival_head_dropout=0 and regularize with weight_decay instead. Open problem: without head dropout, post-peak overfitting returns (Train/C-index ->0.84 vs Val peak 0.72, val decays to ~0.53 by early stop) \u2014 stabilize via weight_decay, encoder-side resnet_dropout (~0.1-0.2), or a tighter cosine/early-stop, NOT head dropout.",
+  "forced_overrides": {
+    "data": "methylome_t1c_combined_high_vs_low",
+    "data.cv.k": 1,
+    "data.module.fold": 1,
+    "env": "local",
+    "exp_dir": "/home/jma/Documents/projects/safwat/coca_classifier_codebase/hpo_runs",
+    "model": "resenc_survival",
+    "model.chpt_path": "/home/jma/Documents/projects/safwat/coca_classifier_codebase/SSL3D_classification/checkpoints/S3D/checkpoint_final.pth",
+    "model.save_preds": false,
+    "trainer.callbacks.checkpoint.save_top_k": 0,
+    "trainer.enable_checkpointing": false
+  },
+  "gpu_requirements_observed": {
+    "accelerator": "gpu",
+    "default_batch_size": 24,
+    "default_patch_size": [
+      64,
+      64,
+      64
+    ],
+    "devices": 1,
+    "notes": "3D ResEncoder backbone at 64^3 patches, batch=24 plus a DeepHit survival head; expect tens of GB VRAM. A 1-epoch smoke should tolerate a reduced batch size if VRAM-limited.",
+    "precision": "16-mixed",
+    "strategy": "ddp_find_unused_parameters_true (from model/resenc_survival.yaml; runs as 1-rank DDP at devices=1)"
+  },
+  "metrics_observed": [
+    "Val/C-index",
+    "Val/C-index_smoothed",
+    "Val/loss",
+    "Val/loss_smoothed",
+    "Val/Brier",
+    "Val/Brier-IPCW",
+    "Val/mean_AUC_landmarks",
+    "Val/logrank_chi2",
+    "Val/logrank_p",
+    "Val/hazard_ratio",
+    "Train/C-index",
+    "Train/C-index_smoothed",
+    "Train/loss",
+    "Train/loss_smoothed",
+    "Train/logrank_chi2",
+    "Train/logrank_p",
+    "Train/hazard_ratio"
+  ],
+  "metrics_source": {
+    "kind": "csv_inject",
+    "params": {
+      "launch_override": "+trainer.csv_logger_dir=<run_scratch>",
+      "read_path": "<run_scratch>/metrics.csv"
+    }
+  },
+  "profile_version": 3,
+  "search_space_declared": [
+    {
+      "bounds": {
+        "high": 0.005,
+        "log": true,
+        "low": 1e-06
+      },
+      "description": "Base learning rate for AdamW (model.optimizer=AdamW), shared by encoder AND survival head in the current model code. The data yaml default 5e-6 is conservative and reaches its Val/C-index peak slowly (~ep34-43). Verified healthy region [1e-5, 5e-4]; best-known point is 5e-5 (Val/C-index 0.718). Too-high lr collapses the DeepHit PMF to a degenerate distribution and pins Val/C-index near 0.5 and/or wipes the pretrained nnSSL encoder features. Log-scaled.",
+      "in_yaml_originally": true,
+      "kind": "continuous",
+      "override_mode": "hydra_override",
+      "path": "model.lr"
+    },
+    {
+      "bounds": {
+        "high": 0.01,
+        "log": true,
+        "low": 1e-06
+      },
+      "description": "AdamW weight decay (L2). Verified: 1e-3 closed the train/val overfitting gap (Train/C-index 0.78->0.65) WITHOUT harming Val/logrank_chi2 \u2014 the PREFERRED regularizer for this dataset because, unlike survival_head_dropout, it does not compress the head's risk-score variance. Below ~1e-5 is effectively no regularization; above ~1e-2 risks underfitting the encoder. To fight post-peak overfitting while keeping stratification, try 2e-3-5e-3 with survival_head_dropout=0. Log-scaled.",
+      "in_yaml_originally": true,
+      "kind": "continuous",
+      "override_mode": "hydra_override",
+      "path": "model.weight_decay"
+    },
+    {
+      "bounds": {
+        "high": 30,
+        "integer": true,
+        "low": 0,
+        "step": 1
+      },
+      "description": "Epochs the encoder is frozen (head-only) at the start before the cosine schedule (warmup phase 1 under finetune_method=full_sawtooth, the deephit default). Integer. Higher is safer when adapting a pretrained encoder to a small cohort. Constraint: warmstart + warmstart2 + T_max(=80) <= trainer.max_epochs(=200).",
+      "in_yaml_originally": true,
+      "kind": "continuous",
+      "override_mode": "hydra_override",
+      "path": "model.warmstart"
+    },
+    {
+      "bounds": {
+        "high": 30,
+        "integer": true,
+        "low": 0,
+        "step": 1
+      },
+      "description": "Second warm-up phase: encoder LR is linearly ramped before joining the cosine schedule. Only honored when model.finetune_method=full_sawtooth (the deephit default); ignored under finetune_method=full. Integer. Same horizon constraint as warmstart.",
+      "in_yaml_originally": true,
+      "kind": "continuous",
+      "override_mode": "hydra_override",
+      "path": "model.warmstart2"
+    },
+    {
+      "bounds": {
+        "high": 0.5,
+        "low": 0
+      },
+      "description": "Dropout inside the pretrained ResEncoder backbone (encoder side). Pretrained weights tolerate ~0.3 without instability. Unlike survival_head_dropout this acts on encoder features rather than the final risk score, so it is the SAFER way to add regularization/stability without flattening per-patient risk-score variance \u2014 a candidate (~0.1-0.2) for taming post-peak overfitting while preserving Val/logrank_chi2.",
+      "in_yaml_originally": true,
+      "kind": "continuous",
+      "override_mode": "hydra_override",
+      "path": "model.resnet_dropout"
+    },
+    {
+      "bounds": {
+        "high": 0.5,
+        "low": 0
+      },
+      "description": "Dropout inside the survival head's MLP blocks (distinct from resnet_dropout). VERIFIED CAVEAT for this dataset/goal (attempt 20260528-091623, trial2 vs trial3, single-variable ablation): values >= 0.2 compress the head's per-patient risk-score variance, which barely changes ranking/C-index but COLLAPSES the KM high/low split and destroys Val/logrank_chi2 (8.27/p=0.004 at 0.0 -> 2.46/p=0.12, NaN at the C-index-peak epoch, at 0.2). Because the goal includes Val/logrank_chi2 > 0, PREFER survival_head_dropout=0 and regularize via weight_decay/resnet_dropout instead. Only raise it if you do not care about stratification.",
+      "in_yaml_originally": true,
+      "kind": "continuous",
+      "override_mode": "hydra_override",
+      "path": "model.survival_head_dropout"
+    },
+    {
+      "bounds": {
+        "choices": [
+          64,
+          128,
+          256,
+          512
+        ]
+      },
+      "description": "Hidden width of the survival-head MLP block before the time-bin logits. Larger = more capacity to fit complex hazard shapes but more overfitting risk on this small cohort; 512 typically needs a lower lr. The deephit yaml default is 128.",
+      "in_yaml_originally": true,
+      "kind": "categorical",
+      "override_mode": "hydra_override",
+      "path": "model.survival_head_hidden_dim"
+    },
+    {
+      "bounds": {
+        "choices": [
+          "layernorm",
+          "batchnorm",
+          "none"
+        ]
+      },
+      "description": "Normalization inside the survival head. batchnorm can be unstable with very small validation batches (guarded for batch_size=1, fine at >=8); layernorm (the deephit default) is the safer choice when batches are small. 'none' disables normalization.",
+      "in_yaml_originally": true,
+      "kind": "categorical",
+      "override_mode": "hydra_override",
+      "path": "model.survival_head_norm"
+    },
+    {
+      "bounds": {
+        "high": 2,
+        "low": 0.1
+      },
+      "description": "DeepHit log-likelihood term weight (total = alpha*LL + beta*Ranking + gamma*Calibration). Lowering alpha de-emphasizes calibrated PMF in favor of beta's ranking term; raising it tightens the PMF onto the event bin (better calibration/Brier, possibly weaker pure ranking). Default 1.0.",
+      "in_yaml_originally": true,
+      "kind": "continuous",
+      "override_mode": "hydra_override",
+      "path": "model.survival_loss.alpha"
+    },
+    {
+      "bounds": {
+        "high": 2,
+        "low": 0
+      },
+      "description": "DeepHit pairwise ranking term weight (beta*Ranking). Directly pushes concordance; raising beta usually improves Val/C-index at the cost of looser PMF calibration, and may help align the (currently misaligned) C-index-peak and logrank-peak epochs. beta=0 reduces the loss to NLL-only. Default 0.5.",
+      "in_yaml_originally": true,
+      "kind": "continuous",
+      "override_mode": "hydra_override",
+      "path": "model.survival_loss.beta"
+    },
+    {
+      "bounds": {
+        "high": 0.05,
+        "low": 0
+      },
+      "description": "DeepHit calibration term weight (gamma*Calibration). CAVEAT: the calibration term SUMS (not means) across the batch, so its effective scale grows linearly with data.module.batch_size and accumulate_grad_batches \u2014 re-tune gamma jointly if you change either. Default 0.0 (disabled).",
+      "in_yaml_originally": true,
+      "kind": "continuous",
+      "override_mode": "hydra_override",
+      "path": "model.survival_loss.gamma"
+    },
+    {
+      "bounds": {
+        "high": 1,
+        "log": true,
+        "low": 0.01
+      },
+      "description": "Ranking-term softness in DeepHit, exp(-diff/sigma). Smaller sigma = sharper margin and stronger gradient on close pairs but higher variance; larger = smoother. MUST be > 0 (DeepHitLoss.__init__ raises ValueError otherwise \u2014 keep the lower bound strictly positive). Default 0.1. Log-scaled.",
+      "in_yaml_originally": true,
+      "kind": "continuous",
+      "override_mode": "hydra_override",
+      "path": "model.survival_loss.sigma"
+    },
+    {
+      "bounds": {
+        "choices": [
+          8,
+          16,
+          24,
+          32
+        ]
+      },
+      "description": "Per-step batch size. Larger batches stabilize the DeepHit ranking gradients at the cost of VRAM (3D 64^3 patches are memory-heavy). Note: model.survival_loss.gamma's effective scale grows with batch size, so retune gamma jointly. Default 24.",
+      "in_yaml_originally": true,
+      "kind": "categorical",
+      "override_mode": "hydra_override",
+      "path": "data.module.batch_size"
+    },
+    {
+      "bounds": {
+        "choices": [
+          1,
+          2,
+          4,
+          8
+        ]
+      },
+      "description": "Gradient accumulation. Effective batch = data.module.batch_size * accumulate_grad_batches. Useful to retain stable ranking gradients when batch_size is dropped for VRAM; also rescales the gamma calibration term's effective magnitude. The deephit yaml default is 2.",
+      "in_yaml_originally": true,
+      "kind": "categorical",
+      "override_mode": "hydra_override",
+      "path": "trainer.accumulate_grad_batches"
+    },
+    {
+      "bounds": {
+        "choices": [
+          "full",
+          "full_sawtooth"
+        ]
+      },
+      "description": "full = single-phase joint fine-tuning of encoder + head. full_sawtooth (the deephit default) = freeze encoder for `warmstart` epochs (head only), linearly ramp encoder LR over `warmstart2` epochs, then cosine-anneal jointly; it REQUIRES scheduler=CosineAnneal and warmstart2>0 to differ from full. No other values are supported by this survival wrapper.",
+      "in_yaml_originally": true,
+      "kind": "categorical",
+      "override_mode": "hydra_override",
+      "path": "model.finetune_method"
+    }
+  ],
+  "training_script": "main.py",
+  "updated_at": "2026-05-28T18:20:00Z",
+  "wandb": {
+    "entity": "aaronchoi6-m31",
+    "note": "Online on the remote host (jma@aihub2.uniseg). NOT the metrics read path for HPO \u2014 see metrics_source (csv_inject). The local MCP/orchestrator host has no WANDB_API_KEY, so do not gate trials on local wandb connectivity.",
+    "project": "nnSSL_MethylomeRisk_Survival"
+  }
+}

@@ -1,0 +1,169 @@
+{
+  "attempt_id": "20260528-214016",
+  "best_hparams": {
+    "data": "methylome_t1c_combined_high_vs_low",
+    "data.cv.k": 1,
+    "data.module.fold": 1,
+    "env": "local",
+    "exp_dir": "/home/jma/Documents/projects/safwat/coca_classifier_codebase/hpo_runs",
+    "model": "resenc_survival",
+    "model.chpt_path": "/home/jma/Documents/projects/safwat/coca_classifier_codebase/SSL3D_classification/checkpoints/S3D/checkpoint_final.pth",
+    "model.lr": 5e-05,
+    "model.save_preds": false,
+    "model.survival_head_dropout": 0.0,
+    "model.survival_loss.beta": 1.0,
+    "model.weight_decay": 0.001,
+    "trainer.callbacks.checkpoint.save_top_k": 0,
+    "trainer.enable_checkpointing": false
+  },
+  "best_metric_mode": "max",
+  "best_metric_name": "Val/C-index",
+  "best_metric_value": 0.6903,
+  "best_trial_index": 3,
+  "cost_usd": 0.0,
+  "date": "2026-05-29",
+  "goal": "Use the data config cli_configs/data/methylome_t1c_combined_high_vs_low.yaml\n(selects survival_loss=deephit). Single fold 1 (not 0) (data.cv.k=1, data.module.fold=1).\nIdentify hyperparameters that produce stable training and validation curves\nAND maximize Val/C-index. Prefer settings that also achieve\nVal/logrank_chi2 > 0 (stratification).\n",
+  "narrative": "5 trial(s). Best is trial #3 (Val/C-index=0.6903).",
+  "tokens_used": {},
+  "trials": [
+    {
+      "analysis": "**Diagnosis.** The run trains stably overall but the validation curves are noisy epoch-to-epoch \u2014 Val/C-index swings sharply between adjacent epochs (e.g., 0.542 at ep19 \u2192 0.383 at ep20; Val/AUC@1y bounces from 0.44 to 1.0) \u2014 consistent with a small validation set; the cosine LR decay to ~0 freezes the tail into a flat plateau (loss pinned at 0.7738 and C-index at 0.6283 across ep79\u201382).\n\nThere is a strong overfitting signature: Train/C-index climbs to ~0.83\u20130.86 and the train risk separation blows up (hazard_ratio ~2 \u2192 21 \u2192 756, logrank_chi2 >100\u2013190 with p\u22481e-25) while Val/C-index only plateaus at ~0.62\u20130.64, Val/hazard_ratio stays ~1.1\u20131.7, and Val/logrank_chi2 stays negligible (<1, non-significant). The split between objective and ranking metric is visible \u2014 Val/loss bottoms around ep37 (\u22480.7505), then rises to \u22480.79 by ep57\u201359 even as Train/loss keeps falling, whereas Val/C-index keeps creeping up slightly to its peak of 0.6372 at ep56 before settling back to ~0.628.\n\nThe best epoch (56) sits at roughly 65% of the 86-epoch run, with the final ~30 epochs producing no improvement (they merely tie at 0.6283 as the LR anneals), so the trial is saturated/mildly overfit rather than under-trained. No catastrophic divergence or collapse on validation \u2014 only a few early NaN logrank values from degenerate risk-group assignment \u2014 and the annealed tail is stable.",
+      "hparams": {
+        "data": "methylome_t1c_combined_high_vs_low",
+        "data.cv.k": 1,
+        "data.module.fold": 1,
+        "env": "local",
+        "exp_dir": "/home/jma/Documents/projects/safwat/coca_classifier_codebase/hpo_runs",
+        "model": "resenc_survival",
+        "model.chpt_path": "/home/jma/Documents/projects/safwat/coca_classifier_codebase/SSL3D_classification/checkpoints/S3D/checkpoint_final.pth",
+        "model.save_preds": false,
+        "trainer.callbacks.checkpoint.save_top_k": 0,
+        "trainer.enable_checkpointing": false
+      },
+      "metrics": {
+        "Train/C-index": 0.8116,
+        "Train/loss": 0.6435,
+        "Val/C-index": 0.6372,
+        "Val/logrank_chi2": 0.8012,
+        "Val/loss": 0.7777
+      },
+      "status": "completed",
+      "trial_index": 1
+    },
+    {
+      "analysis": "The run is clearly two-phase: with the encoder frozen (epochs 0\u20139, encoder LR held at 0) Val/C-index sits *below* chance at ~0.43, then once the encoder unfreezes (~epoch 10) it climbs steadily to a peak of 0.633 at epoch 39, surrounded by a tight cluster of strong epochs 38\u201343 (0.62\u20130.63). Past that point the trial overfits unmistakably: Train/C-index keeps rising to ~0.83 and Train hazard_ratio inflates from ~5 to 60+ (epoch 64) while Val/C-index decays into the 0.53\u20130.60 band and Val/loss bottoms near epoch 40 (~0.746) before drifting back up to ~0.85 by epoch 69. The validation signal is noisy throughout \u2014 neighboring epochs swing (e.g., 0.597\u21920.586 at epochs 44\u201345, a partial rebound to 0.617 at epoch 59) and early Val hazard_ratio/logrank are intermittently NaN, indicating degenerate stratification on a small/unstable val set \u2014 so single-epoch peaks should be read cautiously. The best epoch sits ~30 epochs before the end (39 of 69) with no genuine late recovery, so this trial is overtrained relative to its best validation point, not under-trained.",
+      "hparams": {
+        "data": "methylome_t1c_combined_high_vs_low",
+        "data.cv.k": 1,
+        "data.module.fold": 1,
+        "env": "local",
+        "exp_dir": "/home/jma/Documents/projects/safwat/coca_classifier_codebase/hpo_runs",
+        "model": "resenc_survival",
+        "model.chpt_path": "/home/jma/Documents/projects/safwat/coca_classifier_codebase/SSL3D_classification/checkpoints/S3D/checkpoint_final.pth",
+        "model.lr": 5e-05,
+        "model.save_preds": false,
+        "model.survival_head_dropout": 0.0,
+        "model.weight_decay": 0.001,
+        "trainer.callbacks.checkpoint.save_top_k": 0,
+        "trainer.enable_checkpointing": false
+      },
+      "metrics": {
+        "Train/C-index": 0.7194,
+        "Train/loss": 0.6681,
+        "Val/C-index": 0.6327,
+        "Val/logrank_chi2": 1.667,
+        "Val/loss": 0.7677
+      },
+      "status": "completed",
+      "trial_index": 2
+    },
+    {
+      "analysis": "The primary metric reads as Val/C-index, and this trial is a textbook overfit. Val/C-index climbs noisily through the warmup/encoder-unfreeze phase (encoder lr leaves 0 at epoch 10, where val briefly collapses \u2014 Val/AUC@1y to 0.15, C-index to 0.50), peaks at **epoch 46 (0.690)** alongside the Val/loss trough (~0.775 across epochs 42\u201346), then steadily degrades to the 0.50\u20130.60 range by the end while Val/loss climbs back to ~0.90 (epoch 75\u201376).\n\nMeanwhile Train keeps improving monotonically the whole way \u2014 Train/C-index 0.68\u21920.86, Train/loss 0.76\u21920.52, and Train/hazard_ratio exploding from ~1.5 to the hundreds (262 at ep65, 555 at ep67, 397 at ep73) with logrank_chi2 >170 \u2014 a clear memorization signature opening a train/val C-index gap of ~0.27 by the end, versus near-parity at the peak. The validation signal is also unstable: epoch-to-epoch Val/AUC@1y swings between ~0.13 and ~0.89 and Val/logrank/hazard_ratio go NaN or absurd (3.8e22 at ep47) at many epochs, indicating degenerate/near-single-group val stratification rather than a clean curve. The best epoch sits at ~60% of the run (46 of 76), so roughly 30 epochs of pure post-peak degradation follow it \u2014 no sign of under-training, the opposite.",
+      "hparams": {
+        "data": "methylome_t1c_combined_high_vs_low",
+        "data.cv.k": 1,
+        "data.module.fold": 1,
+        "env": "local",
+        "exp_dir": "/home/jma/Documents/projects/safwat/coca_classifier_codebase/hpo_runs",
+        "model": "resenc_survival",
+        "model.chpt_path": "/home/jma/Documents/projects/safwat/coca_classifier_codebase/SSL3D_classification/checkpoints/S3D/checkpoint_final.pth",
+        "model.lr": 5e-05,
+        "model.save_preds": false,
+        "model.survival_head_dropout": 0.0,
+        "model.survival_loss.beta": 1.0,
+        "model.weight_decay": 0.001,
+        "trainer.callbacks.checkpoint.save_top_k": 0,
+        "trainer.enable_checkpointing": false
+      },
+      "metrics": {
+        "Train/C-index": 0.6766,
+        "Train/loss": 0.756,
+        "Val/C-index": 0.6903,
+        "Val/logrank_chi2": 5.105,
+        "Val/loss": 0.7746
+      },
+      "status": "completed",
+      "trial_index": 3
+    },
+    {
+      "analysis": "The primary metric (Val/C-index) peaks very early at **epoch 7 (0.684)**, and the entire top cluster \u2014 epochs 5, 6, 7, 9 (~0.679\u20130.684) \u2014 falls within the head-only warmup phase while the encoder LR is pinned at 0; the encoder unfreezes at epoch 10 (encoder LR 0\u21925e-6), after which validation discrimination turns noisy and degrades, collapsing to 0.540 (epoch 11) and 0.418 (epoch 20) before only partially recovering to ~0.67 around epoch 33. This is a clear overfitting signature: once the encoder trains, Train/C-index climbs near-monotonically from ~0.50 to ~0.79 and Train/loss falls 0.93\u21920.63 (Train/logrank_chi2 inflating to ~78 and HR to ~36 by epoch 32), while Val/C-index never reattains its early peak \u2014 and Val/loss diverges in direction from the val ranking metric, drifting down to ~0.81 (epochs 15/33) even as C-index worsens. The best epoch sits at only **7 of 38 (~18% through)**, so essentially all of the full-finetuning regime hurts the primary metric; the model is overfit on the val ranking side, not under-trained. The logrank signal is also unreliable near the peak: Val/logrank_chi2 is NaN for epochs 4\u20138 and shows a degenerate spike at epoch 9 (HR \u2248 9.1e10, chi2 24.3), indicating collapsed/unstable risk stratification rather than genuine separation.",
+      "hparams": {
+        "data": "methylome_t1c_combined_high_vs_low",
+        "data.cv.k": 1,
+        "data.module.fold": 1,
+        "env": "local",
+        "exp_dir": "/home/jma/Documents/projects/safwat/coca_classifier_codebase/hpo_runs",
+        "model": "resenc_survival",
+        "model.chpt_path": "/home/jma/Documents/projects/safwat/coca_classifier_codebase/SSL3D_classification/checkpoints/S3D/checkpoint_final.pth",
+        "model.lr": 5e-05,
+        "model.resnet_dropout": 0.1,
+        "model.save_preds": false,
+        "model.survival_head_dropout": 0.0,
+        "model.survival_loss.alpha": 1.0,
+        "model.survival_loss.beta": 1.0,
+        "model.survival_loss.sigma": 0.1,
+        "model.weight_decay": 0.002,
+        "trainer.callbacks.checkpoint.save_top_k": 0,
+        "trainer.enable_checkpointing": false
+      },
+      "metrics": {
+        "Train/C-index": 0.4657,
+        "Train/loss": 0.8772,
+        "Val/C-index": 0.6836,
+        "Val/logrank_chi2": NaN,
+        "Val/loss": 0.8737
+      },
+      "status": "completed",
+      "trial_index": 4
+    },
+    {
+      "analysis": "This trial trains a survival model whose primary metric reads as **Val/C-index**, and the dynamics show smooth training progress over a very noisy, non-monotonic validation signal. Train metrics improve steadily and without pause (Train/C-index ~0.50\u21920.82, Train/loss 1.47\u21920.61, with Train/logrank_chi2 and hazard_ratio exploding to ~90 and ~60\u00d7 by epochs 52\u201363), but **Val/C-index peaks at epoch 33 (0.6571)** and then degrades and oscillates down to the ~0.55\u20130.63 range, while Val/loss bottoms early around epoch 21 (~0.808) and drifts back up to ~0.85\u20130.92 \u2014 a clear overfitting signature where the optimum sits roughly mid-run (epoch 33 of 64, ~52%) and all top-5 epochs (28\u201345) precede the end.\n\nValidation is genuinely unstable, not just slowly declining: Val/C-index swings several points epoch-to-epoch (e.g. 0.635\u21920.606\u21920.657\u21920.599 across epochs 28\u201334), Val/AUC@1y jumps erratically (e.g. 0.06 at epoch 11, 0.82 at epoch 52), and Val/logrank_chi2 frequently returns NaN (including in the #5 epoch, 28), pointing to small/degenerate validation risk strata. There is also a sharp early transient collapse at epochs 10\u201311 (Val/C-index drops to 0.43 then 0.34, AUC@1y to 0.06), coinciding with the encoder learning rate turning on (encoder LR 0\u21925e-6 at step 50), after which validation recovers and climbs to its epoch-33 peak. The run is clearly over-trained past its validation optimum \u2014 train and val have decoupled \u2014 rather than under-trained, since validation is falling while training continues to sharpen.",
+      "hparams": {
+        "data": "methylome_t1c_combined_high_vs_low",
+        "data.cv.k": 1,
+        "data.module.fold": 1,
+        "env": "local",
+        "exp_dir": "/home/jma/Documents/projects/safwat/coca_classifier_codebase/hpo_runs",
+        "model": "resenc_survival",
+        "model.chpt_path": "/home/jma/Documents/projects/safwat/coca_classifier_codebase/SSL3D_classification/checkpoints/S3D/checkpoint_final.pth",
+        "model.lr": 5e-05,
+        "model.save_preds": false,
+        "model.survival_head_dropout": 0.0,
+        "model.survival_loss.beta": 1.0,
+        "model.weight_decay": 0.002,
+        "trainer.callbacks.checkpoint.save_top_k": 0,
+        "trainer.enable_checkpointing": false
+      },
+      "metrics": {
+        "Train/C-index": 0.6816,
+        "Train/loss": 0.7723,
+        "Val/C-index": 0.6571,
+        "Val/logrank_chi2": 3.608,
+        "Val/loss": 0.8023
+      },
+      "status": "completed",
+      "trial_index": 5
+    }
+  ],
+  "trials_completed": 5
+}

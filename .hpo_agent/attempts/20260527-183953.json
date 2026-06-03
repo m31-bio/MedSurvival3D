@@ -1,0 +1,143 @@
+{
+  "attempt_id": "20260527-183953",
+  "best_hparams": {},
+  "best_metric_mode": "max",
+  "best_metric_name": "Val/C-index",
+  "best_metric_value": 0.0,
+  "best_trial_index": 1,
+  "cost_usd": 1.4240972500000002,
+  "date": "2026-05-27",
+  "goal": "Use the data config cli_configs/data/methylome_t1c_combined_high_vs_low.yaml\n(selects survival_loss=deephit). Single fold (data.cv.k=1, data.module.fold=0).\nIdentify hyperparameters that produce stable training and validation curves\nAND maximize Val/C-index. Prefer settings that also achieve\nVal/logrank_chi2 > 0 (stratification).\n",
+  "narrative": "3 trial(s). Best is trial #1 (Val/C-index=0.0).",
+  "tokens_used": {
+    "cache_creation_input_tokens": 58623,
+    "cache_read_input_tokens": 1182407,
+    "input_tokens": 65,
+    "output_tokens": 18647
+  },
+  "trials": [
+    {
+      "analysis": "Baseline trial 1 with hparams={} (deephit on methylome_t1c_combined_high_vs_low, k=1 fold=0, env=local). Two consecutive launches both failed instantly with the same `nohup: failed to run command 'python'` error from the remote shell. Root cause: the remote uv-managed venv interpreter is only reachable by absolute path under nohup-style spawning, and the MCP server's cached launch_command_template still says `python {script}`. Fixed the template on disk; orchestrator restart required before any trial can produce metrics. No model training occurred, so no comment yet on lr/beta/calibration tradeoffs. Once unblocked, the baseline should reach training under env=local + the uv venv and write to wandb project nnSSL_MethylomeRisk_Survival as in prior local runs (e.g. run o2lux7zf from deephit_fold0.log).",
+      "applied_forced_overrides": {
+        "data": "methylome_t1c_combined_high_vs_low",
+        "data.cv.k": 1,
+        "data.module.fold": 0,
+        "env": "local",
+        "exp_dir": "/home/jma/Documents/projects/safwat/coca_classifier_codebase/hpo_runs",
+        "model": "resenc_survival",
+        "seed": 42,
+        "trainer.callbacks.checkpoint.save_top_k": 0,
+        "trainer.enable_checkpointing": false
+      },
+      "blocker": {
+        "diagnosis": "Remote host jma@aihub2.uniseg has no `python` on PATH (only /usr/bin/python3 and /usr/bin/python3.10, neither of which is the project env). The project is uv-managed; the correct interpreter is /home/jma/Documents/projects/safwat/coca_classifier_codebase/.venv/resnetmae_coca_classifier/bin/python (Python 3.12.11). The MCP server's in-memory launch_command_template is still the literal `python {script}` from server startup; it does not reread repo_profile.json per-trial.",
+        "error": "nohup: failed to run command 'python': No such file or directory",
+        "fix_on_disk": "Updated .hpo_agent/repo_profile.json launch_command_template -> `/home/jma/Documents/projects/safwat/coca_classifier_codebase/.venv/resnetmae_coca_classifier/bin/python {script}`. This will take effect after MCP server restart.",
+        "polls_attempted": 1,
+        "recommended_fix": "Restart the HPO MCP server / orchestrator. Structurally identical to prior session's `{overrides}` placeholder and stale-DNS-resolver blockers, which also required orchestrator restart.",
+        "retry_attempted_after_fix": true,
+        "where": "remote shell process spawned by MCP launch_remote_trial"
+      },
+      "hparams": {},
+      "launch": {
+        "effective_config_args": "data=methylome_t1c_combined_high_vs_low data.cv.k=1 data.module.fold=0 env=local exp_dir=/home/jma/Documents/projects/safwat/coca_classifier_codebase/hpo_runs model=resenc_survival seed=42 trainer.callbacks.checkpoint.save_top_k=0 trainer.enable_checkpointing=false",
+        "launch_succeeded_at_mcp": true,
+        "pid": 82927,
+        "remote_log_path": "/home/jma/Documents/projects/safwat/coca_classifier_codebase/SSL3D_survival/.hpo_agent_logs/trial-001.log",
+        "run_id": "cbf1d7896e404ef299545a003398cce1",
+        "started_at": "2026-05-27T22:41:31Z"
+      },
+      "metrics": null,
+      "notes": "Trial was launched twice (run_ids 43ed8357712a47e0982468f843b0e59b and cbf1d7896e404ef299545a003398cce1); both failed identically at the shell layer. The .hpo_agent/repo_profile.json edit is the only writable fix available within my permission scope.",
+      "phase": "launch",
+      "status": "system_blocked",
+      "trial_index": 1,
+      "wandb": null
+    },
+    {
+      "analysis": "Trial 2 (model.lr=5e-5) never reached training. Same shell-layer failure as trial 1 in this attempt: the MCP server's cached launch_command_template still says `python {script}` even though the on-disk profile was updated to the absolute uv-venv path during trial 1. The hparam choice itself (10x lr increase to address the diagnosed head overfitting at baseline lr=5e-6) is unevaluated. Cannot make a substantive lr / weight_decay / dropout judgement until orchestrator restart enables training. If trial 3 also fires before restart, it will fail identically \u2014 the only productive next action is the user restarting the MCP server.",
+      "applied_forced_overrides": {
+        "data": "methylome_t1c_combined_high_vs_low",
+        "data.cv.k": 1,
+        "data.module.fold": 0,
+        "env": "local",
+        "exp_dir": "/home/jma/Documents/projects/safwat/coca_classifier_codebase/hpo_runs",
+        "model": "resenc_survival",
+        "seed": 42,
+        "trainer.callbacks.checkpoint.save_top_k": 0,
+        "trainer.enable_checkpointing": false
+      },
+      "blocker": {
+        "diagnosis": "Identical to trial 1 blocker. MCP HPO server still uses its startup-cached launch_command_template `python {script}`. The remote shell has no `python` on PATH; the project's uv-managed venv interpreter at /home/jma/Documents/projects/safwat/coca_classifier_codebase/.venv/resnetmae_coca_classifier/bin/python (Python 3.12.11) requires the absolute path under nohup spawning.",
+        "error": "nohup: failed to run command 'python': No such file or directory",
+        "fix_on_disk": ".hpo_agent/repo_profile.json launch_command_template was already updated in trial 1's session to use the absolute venv-python path. No further on-disk changes possible from inside trial 2; only orchestrator restart will activate the fix.",
+        "polls_attempted": 1,
+        "recommended_fix": "Restart the HPO MCP server / orchestrator so it re-reads .hpo_agent/repo_profile.json. Same recovery pattern as the prior session's `{overrides}` placeholder blocker and stale DNS resolver blocker.",
+        "retry_attempted_after_fix": false,
+        "where": "remote shell process spawned by MCP launch_remote_trial"
+      },
+      "hparam_rationale": "Single-knob bump from baseline: model.lr=5e-6 -> 5e-5 (10x). Motivated by the parallel attempt (runs/20260527-111157/trials/trial-001.json memory note) showing baseline lr=5e-6 plateaued at Val/C-index=0.6225 with Train/Val gap=0.13 and sign-flipped HR (head-overfitting signature). 5e-5 sits in the lower-middle of the DeepHit healthy range [1e-5, 5e-4]; aggressive enough to escape the underfit plateau without the PMF-collapse failure mode of higher lr. Held all other knobs constant so trial 3 can isolate lr's effect.",
+      "hparams": {
+        "model.lr": 5e-05
+      },
+      "launch": {
+        "effective_config_args": "model.lr=5e-05 data=methylome_t1c_combined_high_vs_low data.cv.k=1 data.module.fold=0 env=local exp_dir=/home/jma/Documents/projects/safwat/coca_classifier_codebase/hpo_runs model=resenc_survival seed=42 trainer.callbacks.checkpoint.save_top_k=0 trainer.enable_checkpointing=false",
+        "launch_succeeded_at_mcp": true,
+        "pid": 102509,
+        "remote_log_path": "/home/jma/Documents/projects/safwat/coca_classifier_codebase/SSL3D_survival/.hpo_agent_logs/trial-002.log",
+        "run_id": "d84d23902c5640599bc261ec1d95518d",
+        "started_at": "2026-05-27T22:43:11Z"
+      },
+      "metrics": null,
+      "notes": "Hparam rationale preserved here so that, after orchestrator restart, this exact configuration (model.lr=5e-5) can be re-run as the first informed point above baseline.",
+      "phase": "launch",
+      "status": "system_blocked",
+      "trial_index": 2,
+      "wandb": null
+    },
+    {
+      "analysis": "Trial 3 never reached training. Same shell-layer failure as trials 1 and 2 in this attempt -- the MCP server's cached launch_command_template still says `python {script}` despite the on-disk fix. The Hydra args composed correctly (model.lr=0.0001 model.weight_decay=0.001 model.survival_head_dropout=0.3 lead the effective_config_args), confirming hparam plumbing is healthy. End-of-attempt summary: 0 of 3 trials produced metrics; the sole productive action remains an external MCP server restart. The planned three-point sweep (baseline / lr=5e-5 single-knob / lr=1e-4 + WD + head-dropout combo) is preserved verbatim in the trial records for re-run.",
+      "applied_forced_overrides": {
+        "data": "methylome_t1c_combined_high_vs_low",
+        "data.cv.k": 1,
+        "data.module.fold": 0,
+        "env": "local",
+        "exp_dir": "/home/jma/Documents/projects/safwat/coca_classifier_codebase/hpo_runs",
+        "model": "resenc_survival",
+        "seed": 42,
+        "trainer.callbacks.checkpoint.save_top_k": 0,
+        "trainer.enable_checkpointing": false
+      },
+      "blocker": {
+        "diagnosis": "Identical to trial 1 and trial 2 blockers in this attempt. MCP HPO server still uses its startup-cached launch_command_template `python {script}`. Remote host has no `python` on PATH; project uv-venv interpreter at /home/jma/Documents/projects/safwat/coca_classifier_codebase/.venv/resnetmae_coca_classifier/bin/python (Python 3.12.11) requires absolute path under nohup.",
+        "error": "nohup: failed to run command 'python': No such file or directory",
+        "fix_on_disk": ".hpo_agent/repo_profile.json launch_command_template already updated to absolute venv-python path during trial 1. No further on-disk action available.",
+        "polls_attempted": 1,
+        "recommended_fix": "Restart MCP HPO server / orchestrator. After restart, re-run this attempt: trial 1 = hparams={}, trial 2 = {model.lr: 5e-5}, trial 3 = {model.lr: 1e-4, model.weight_decay: 1e-3, model.survival_head_dropout: 0.3}. The Hydra override composition has been verified working at the MCP layer for all three.",
+        "retry_attempted_after_fix": false,
+        "where": "remote shell process spawned by MCP launch_remote_trial"
+      },
+      "hparam_rationale": "Three-knob aligned-direction configuration. (1) model.lr=1e-4: 20x bump from baseline 5e-6, near the middle of the DeepHit healthy range [1e-5, 5e-4] -- targets the underfit plateau diagnosed in the parallel attempt's baseline (Val/C-index 0.6225). (2) model.weight_decay=1e-3: 2 orders of magnitude above the profile's `effectively no regularization` threshold of 1e-5, well below the `risks underfitting the encoder` boundary of 1e-2 -- counterweight to the increased lr-driven memorization pressure on the survival head. (3) model.survival_head_dropout=0.3: targets the diagnosed head overfitting (Train/Val gap 0.13 + sign-flipped HR) by directly regularizing the two MLP blocks that wrap the encoder features. All three knobs push against the same failure mode (head over-memorization), so a positive result would jointly validate `higher lr + head regularization` as a useful regime; a negative result with Val/C-index near 0.5 would indicate lr=1e-4 is past the PMF-collapse threshold and a single intermediate point (e.g. 3e-5) would be the right next step.",
+      "hparams": {
+        "model.lr": 0.0001,
+        "model.survival_head_dropout": 0.3,
+        "model.weight_decay": 0.001
+      },
+      "launch": {
+        "effective_config_args": "model.lr=0.0001 model.weight_decay=0.001 model.survival_head_dropout=0.3 data=methylome_t1c_combined_high_vs_low data.cv.k=1 data.module.fold=0 env=local exp_dir=/home/jma/Documents/projects/safwat/coca_classifier_codebase/hpo_runs model=resenc_survival seed=42 trainer.callbacks.checkpoint.save_top_k=0 trainer.enable_checkpointing=false",
+        "launch_succeeded_at_mcp": true,
+        "pid": 115956,
+        "remote_log_path": "/home/jma/Documents/projects/safwat/coca_classifier_codebase/SSL3D_survival/.hpo_agent_logs/trial-003.log",
+        "run_id": "d79b3a6b630245d4ba9042d399b0c0e1",
+        "started_at": "2026-05-27T22:44:20Z"
+      },
+      "metrics": null,
+      "notes": "Final trial in this attempt. After orchestrator restart, the records in runs/20260527-183953/trials/trial-00{1,2,3}.json can be used directly to re-execute the same hparam plan with identical Hydra args.",
+      "phase": "launch",
+      "status": "system_blocked",
+      "trial_index": 3,
+      "wandb": null
+    }
+  ],
+  "trials_completed": 3
+}
