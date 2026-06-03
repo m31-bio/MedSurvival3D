@@ -357,6 +357,23 @@ class SoftLogRankLoss(nn.Module):
         return total, components
 
 
+class CompositeSurvivalLoss(nn.Module):
+    """Container for a weighted sum of survival losses.
+
+    Holds the member criteria (so their parameters register), their names, the
+    parallel weights, and the ``primary`` member name. The weighted summation
+    and the ``y_hat -> input`` mapping live in ``base_model._survival_loss``;
+    this class is only the data holder.
+    """
+
+    def __init__(self, members, names, weights, primary):
+        super().__init__()
+        self.members = nn.ModuleList(members)
+        self.names = list(names)
+        self.weights = list(weights)
+        self.primary = primary
+
+
 def _reject_legacy_cox_loss_lambda(kwargs):
     if "cox_loss_lambda" in kwargs and kwargs["cox_loss_lambda"] is not None:
         raise ValueError(
@@ -364,6 +381,108 @@ def _reject_legacy_cox_loss_lambda(kwargs):
             "`model.survival_loss: {name: cox}` to train Cox alone or "
             "`{name: nll}` for plain NLL."
         )
+
+
+_SINGLE_LOSS_NAMES = (
+    "nll", "cox", "deephit", "soft_logrank",
+    "pmf", "mtlr", "bcesurv", "weibull", "pchazard",
+)
+
+
+def _parse_composite(cfg):
+    """Validate a composite ``survival_loss`` block and normalise it.
+
+    Returns ``(components, primary)`` where ``components`` is a list of
+    ``{"name", "cfg", "weight"}`` dicts in config order (``cfg`` is the original
+    per-component mapping, carrying that loss's own options) and ``primary`` is
+    the lowercased name of the component that drives metrics/inference.
+
+    Validates without constructing any loss objects, so it is dependency-free.
+    Raises ``ValueError`` on any malformed block.
+    """
+    if "components" not in cfg or not cfg["components"]:
+        raise ValueError(
+            "composite survival_loss requires a non-empty 'components' list."
+        )
+    if "primary" not in cfg or cfg["primary"] is None:
+        raise ValueError(
+            "composite survival_loss requires a 'primary' naming one component."
+        )
+
+    components = []
+    seen = set()
+    for entry in cfg["components"]:
+        if "name" not in entry:
+            raise ValueError("each composite component needs a 'name'.")
+        nm = str(entry["name"]).lower()
+        if nm == "composite":
+            raise ValueError(
+                "composite components cannot themselves be 'composite' (no nesting)."
+            )
+        if nm not in _SINGLE_LOSS_NAMES:
+            raise ValueError(
+                f"unknown composite component name: {nm!r}. Expected one of: "
+                + ", ".join(_SINGLE_LOSS_NAMES) + "."
+            )
+        if nm in seen:
+            raise ValueError(f"duplicate composite component name: {nm!r}.")
+        seen.add(nm)
+        weight = entry.get("weight", 1.0)
+        try:
+            weight = float(weight)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"composite component {nm!r} has non-numeric weight: {weight!r}."
+            )
+        if weight < 0:
+            raise ValueError(
+                f"composite component {nm!r} has negative weight: {weight}."
+            )
+        components.append({"name": nm, "cfg": entry, "weight": weight})
+
+    primary = str(cfg["primary"]).lower()
+    if primary not in seen:
+        raise ValueError(
+            f"composite 'primary' {primary!r} is not among components: {sorted(seen)}."
+        )
+    return components, primary
+
+
+def _build_single_criterion(name, cfg):
+    """Construct one survival-loss module from its (lowercased) name and config.
+
+    ``cfg`` is the per-loss mapping carrying that loss's options. Shared by the
+    single-loss path and each member of a composite.
+    """
+    if name == "nll":
+        return NLLSurvLoss(reduction=cfg.get("reduction", "mean"))
+    if name == "cox":
+        return CoxPHLoss(reduction=cfg.get("reduction", "mean"))
+    if name == "deephit":
+        return DeepHitLoss(
+            alpha=cfg.get("alpha", 0.2),
+            sigma=cfg.get("sigma", 0.1),
+        )
+    if name == "soft_logrank":
+        return SoftLogRankLoss(
+            lambda_balance=float(cfg.get("lambda_balance", 0.01)),
+            min_frac=float(cfg.get("min_frac", 0.20)),
+            max_frac=float(cfg.get("max_frac", 0.80)),
+        )
+    if name == "pmf":
+        return PMFLoss()
+    if name == "mtlr":
+        return MTLRLoss()
+    if name == "bcesurv":
+        return BCESurvLoss()
+    if name == "weibull":
+        return WeibullLoss(reduction=cfg.get("reduction", "mean"))
+    if name == "pchazard":
+        return PCHazardLoss()
+    raise ValueError(
+        f"Unknown survival_loss.name: {name!r}. Expected one of: "
+        + ", ".join(_SINGLE_LOSS_NAMES) + "."
+    )
 
 
 def build_survival_criterion(cfg, num_time_bins: int):
@@ -383,6 +502,10 @@ def build_survival_criterion(cfg, num_time_bins: int):
       - ``bcesurv``      — pycox BCESurv loss. No extra opts.
       - ``weibull``      — Parametric Weibull AFT. Opts: reduction (default "mean").
       - ``pchazard``     — pycox piecewise-constant hazard NLL. No extra opts.
+      - ``composite``    — weighted sum of any of the above. Requires a
+                           ``components`` list (each a single-loss block plus an
+                           optional ``weight``, default 1.0) and a ``primary``
+                           naming the member that drives metrics/inference.
     """
     if cfg is None:
         cfg = {"name": "nll"}
@@ -398,35 +521,14 @@ def build_survival_criterion(cfg, num_time_bins: int):
         )
     name = str(cfg["name"]).lower()
 
-    if name == "nll":
-        return name, NLLSurvLoss(reduction=cfg.get("reduction", "mean"))
-    if name == "cox":
-        return name, CoxPHLoss(reduction=cfg.get("reduction", "mean"))
-    if name == "deephit":
-        return name, DeepHitLoss(
-            alpha=cfg.get("alpha", 0.2),
-            sigma=cfg.get("sigma", 0.1),
-        )
-    if name == "soft_logrank":
-        return name, SoftLogRankLoss(
-            lambda_balance=float(cfg.get("lambda_balance", 0.01)),
-            min_frac=float(cfg.get("min_frac", 0.20)),
-            max_frac=float(cfg.get("max_frac", 0.80)),
-        )
-    if name == "pmf":
-        return name, PMFLoss()
-    if name == "mtlr":
-        return name, MTLRLoss()
-    if name == "bcesurv":
-        return name, BCESurvLoss()
-    if name == "weibull":
-        return name, WeibullLoss(reduction=cfg.get("reduction", "mean"))
-    if name == "pchazard":
-        return name, PCHazardLoss()
-    raise ValueError(
-        f"Unknown survival_loss.name: {name!r}. Expected one of: "
-        "nll, cox, deephit, soft_logrank, pmf, mtlr, bcesurv, weibull, pchazard."
-    )
+    if name == "composite":
+        components, primary = _parse_composite(cfg)
+        members = [_build_single_criterion(c["name"], c["cfg"]) for c in components]
+        names = [c["name"] for c in components]
+        weights = [c["weight"] for c in components]
+        return name, CompositeSurvivalLoss(members, names, weights, primary)
+
+    return name, _build_single_criterion(name, cfg)
 
 
 import numpy as _np

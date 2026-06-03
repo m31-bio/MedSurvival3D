@@ -1,0 +1,107 @@
+# @package _global_
+data:
+  module:
+    _target_: datasets.coca_t1c_combined_b2nd.COCACombinedB2NDDataModule
+    name: Methylome_T1c_Composite
+    data_root_dir: /home/jma/Documents/projects/safwat/coca_classifier_codebase/dataset/nnssl_preprocessed/Dataset019_UHN_Mayo_T1c_mask
+    batch_size: 24
+    train_transforms:
+      _target_: augmentation.policies.batchgenerators.get_training_transforms
+      patch_size: ${data.patch_size}
+      rotation_for_DA: 0.523599
+      mirror_axes:
+      - 0
+      - 1
+      - 2
+      do_dummy_2d_data_aug: false
+    test_transforms:
+      _target_: augmentation.policies.batchgenerators.get_test_transforms
+      patch_size: ${data.patch_size}
+      do_dummy_2d_data_aug: false
+    fold: 0
+    data_subdir: nnsslPlans_onemmiso/Dataset019_UHN_Mayo_T1c_mask/Dataset019_UHN_Mayo_T1c_mask
+    label_file: /home/jma/Documents/projects/safwat/coca_classifier_codebase/dataset/nnssl_preprocessed/Dataset019_UHN_Mayo_T1c_mask/survival_labels.json
+    split_file: /home/jma/Documents/projects/safwat/coca_classifier_codebase/dataset/nnssl_preprocessed/Dataset019_UHN_Mayo_T1c_mask/splits_balanced_survival.json
+    image_suffix: .b2nd
+    mask_suffix: __anat.b2nd
+    session_id: ses-DEFAULT
+    target_shape: ${data.patch_size}
+    allow_missing_mask: false
+  cv:
+    k: 5
+  patch_size:
+  - 64
+  - 64
+  - 64
+fixed_survival_time_bins:
+  cut_points_years:
+  - 1.0
+  - 2.0
+  - 3.0
+  - 5.0
+  labels:
+  - 0-1y
+  - 1-2y
+  - 2-3y
+  - 3-5y
+  - 5y+
+  num_time_bins: 5
+model:
+  cifar_size: false
+  input_channels: 2
+  input_dim: 3
+  input_shape: ${data.patch_size}
+  optimizer: AdamW
+  lr: 5.0e-06
+  scheduler: CosineAnneal
+  T_max: 80
+  warmstart: 10
+  warmstart2: 10
+  weight_decay: 0.001
+  finetune_method: full_sawtooth
+  resnet_dropout: 0.2
+  num_time_bins: ${fixed_survival_time_bins.num_time_bins}
+  survival_head_hidden_dim: 128
+  survival_head_dropout: 0.2
+  survival_head_norm: layernorm
+  survival_cut_points_years: ${fixed_survival_time_bins.cut_points_years}
+  survival_landmark_years: ${fixed_survival_time_bins.cut_points_years}
+  survival_smoothing_alpha: 0.05
+  survival_loss:
+    # Weighted sum of several losses. total = sum(weight_i * loss_i).
+    # 'primary' names the member whose head output drives ALL metrics &
+    # inference (C-index, KM stratification, saved predictions). The other
+    # members are pure training-gradient regularisers. Each member's
+    # UNWEIGHTED loss is logged as Train/member_<Name>Loss so weights can be
+    # tuned against the magnitude mismatch between losses (e.g. Cox vs NLL).
+    name: composite
+    primary: nll              # calibrated survival curve drives metrics/inference.
+    components:
+      - {name: nll, weight: 1.0}              # calibration (logistic-hazard NLL).
+      - {name: cox, weight: 0.3, reduction: mean}  # HPARAM (log): [0.05, 3.0]. Discrimination term.
+  save_preds: true
+  result_plot: null
+trainer:
+  logger:
+    project: nnSSL_MethylomeRisk_Survival
+    name: t1c_composite
+  accumulate_grad_batches: 2
+  max_epochs: 200
+  sync_batchnorm: true
+  callbacks:
+    checkpoint:
+      filename: best-cindex-epoch{epoch}-Val_loss={Val/loss:.2f}-Val_C-index={Val/C-index:.4f}
+      mode: max
+      monitor: Val/C-index
+      save_top_k: 0
+    early_stopping:
+      _target_: lightning.pytorch.callbacks.EarlyStopping
+      monitor: Val/C-index
+      mode: max
+      patience: 30
+      min_delta: 0.002
+metrics: []
+# Optional stratification metric controls (defaults shown):
+# survival_stratification_landmark_year: 5.0           # year used as landmark for NLL/DeepHit scalar risk (1 - S(t))
+# survival_stratification_quantile_range: [0.2, 0.8]   # candidate bracket for max-logrank cutpoint search (Cox/NLL/DeepHit)
+

@@ -33,6 +33,7 @@ _SURVIVAL_LOSS_TAGS = {
     "mtlr": "MTLR",
     "bcesurv": "BCESurv",
     "pchazard": "PCHazard",
+    "composite": "Composite",
 }
 
 
@@ -126,6 +127,14 @@ class BaseModel(L.LightningModule):
             survival_loss_cfg = {"name": "nll"}
         self.survival_loss_name, self.criterion = build_survival_criterion(
             survival_loss_cfg, num_time_bins=self.num_time_bins,
+        )
+        # For a composite loss, the designated 'primary' member drives all
+        # metrics/inference (output selection); for single losses the two names
+        # are identical.
+        self.survival_primary_name = (
+            self.criterion.primary
+            if self.survival_loss_name == "composite"
+            else self.survival_loss_name
         )
 
         default_cut_points_years = (
@@ -321,41 +330,77 @@ class BaseModel(L.LightningModule):
     def _survival_label_tensor(self, time_bin, event):
         return torch.stack([time_bin.float(), event.float()], dim=1)
 
+    def _call_one_loss(self, name, criterion, y_hat, time_bin, event, continuous_time):
+        """Run one survival criterion, returning ``(loss_tensor, components)``.
+
+        Maps the stable ``y_hat`` dict to the input each loss expects.
+        ``components`` is the soft_logrank diagnostics dict (empty otherwise).
+        """
+        if name == "nll":
+            return criterion(y_hat["logits"], time_bin, event), {}
+        if name == "cox":
+            return criterion(y_hat["risk"], continuous_time, event), {}
+        if name == "deephit":
+            return criterion(y_hat["pmf_logits"], time_bin, event), {}
+        if name == "soft_logrank":
+            total, components = criterion(y_hat["p_high"], continuous_time, event)
+            return total, components
+        if name == "pmf":
+            return criterion(y_hat["pmf_logits"], time_bin, event), {}
+        if name in ("mtlr", "bcesurv"):
+            return criterion(y_hat["logits"], time_bin, event), {}
+        if name == "weibull":
+            return criterion(y_hat["weibull_params"], continuous_time, event), {}
+        if name == "pchazard":
+            interval_frac = self._interval_frac(continuous_time, time_bin)
+            return criterion(y_hat["logits"], time_bin, event, interval_frac), {}
+        raise ValueError(f"Unexpected survival_loss_name: {name!r}")
+
+    def _log_composite_member_losses(self, split, loss_parts):
+        """Log each composite member's UNWEIGHTED loss so weights are tunable.
+
+        No-op for single losses. Tag is e.g. ``Train/member_NLLLoss``.
+        """
+        if self.survival_loss_name != "composite":
+            return
+        prefix = "Train" if split == "train" else "Val"
+        for mname in self.criterion.names:
+            self.log(
+                f"{prefix}/member_{_SURVIVAL_LOSS_TAGS[mname]}Loss",
+                loss_parts[mname],
+                on_step=False,
+                on_epoch=True,
+                prog_bar=False,
+                sync_dist=True,
+            )
+
     def _survival_loss(self, y_hat, y):
         time_bin, event, continuous_time = self._unpack_survival_targets(y)
         name = self.survival_loss_name
 
-        if name == "nll":
-            loss = self.criterion(y_hat["logits"], time_bin, event)
-            loss_parts = {"total": loss, name: loss}
-        elif name == "cox":
-            loss = self.criterion(y_hat["risk"], continuous_time, event)
-            loss_parts = {"total": loss, name: loss}
-        elif name == "deephit":
-            loss = self.criterion(y_hat["pmf_logits"], time_bin, event)
-            loss_parts = {"total": loss, name: loss}
-        elif name == "soft_logrank":
-            total, components = self.criterion(
-                y_hat["p_high"],
-                continuous_time,
-                event,
-            )
-            loss_parts = {"total": total, name: total, **components}
-        elif name == "pmf":
-            loss = self.criterion(y_hat["pmf_logits"], time_bin, event)
-            loss_parts = {"total": loss, name: loss}
-        elif name in ("mtlr", "bcesurv"):
-            loss = self.criterion(y_hat["logits"], time_bin, event)
-            loss_parts = {"total": loss, name: loss}
-        elif name == "weibull":
-            loss = self.criterion(y_hat["weibull_params"], continuous_time, event)
-            loss_parts = {"total": loss, name: loss}
-        elif name == "pchazard":
-            interval_frac = self._interval_frac(continuous_time, time_bin)
-            loss = self.criterion(y_hat["logits"], time_bin, event, interval_frac)
-            loss_parts = {"total": loss, name: loss}
+        if name == "composite":
+            total = None
+            loss_parts = {}
+            for member, mname, weight in zip(
+                self.criterion.members,
+                self.criterion.names,
+                self.criterion.weights,
+            ):
+                member_loss, member_components = self._call_one_loss(
+                    mname, member, y_hat, time_bin, event, continuous_time,
+                )
+                loss_parts[mname] = member_loss  # unweighted, for logging/tuning
+                contribution = weight * member_loss
+                total = contribution if total is None else total + contribution
+                if mname == self.criterion.primary:
+                    loss_parts.update(member_components)
+            loss_parts["total"] = total
+            loss_parts["composite"] = total
         else:
-            raise ValueError(f"Unexpected survival_loss_name: {name!r}")
+            loss, components = self._call_one_loss(
+                name, self.criterion, y_hat, time_bin, event, continuous_time,
+            )
+            loss_parts = {"total": loss, name: loss, **components}
 
         return loss_parts, time_bin, event, continuous_time
 
@@ -367,7 +412,7 @@ class BaseModel(L.LightningModule):
         event,
         continuous_time,
     ):
-        if self.survival_loss_name in ("cox", "soft_logrank"):
+        if self.survival_primary_name in ("cox", "soft_logrank"):
             # Cox: risk = log hazard ratio. soft_logrank: risk = stratification
             # logit (sigmoid → p_high). Both are monotonic continuous risk
             # scores suitable for C-index. No calibrated survival curve.
@@ -593,7 +638,7 @@ class BaseModel(L.LightningModule):
         if not self.train_survival_risks:
             return
 
-        loss_name = self.survival_loss_name
+        loss_name = self.survival_primary_name
         landmark_bin_idx = (
             self._resolve_stratification_landmark_bin()
             if loss_name not in ("cox", "soft_logrank")
@@ -705,6 +750,7 @@ class BaseModel(L.LightningModule):
             prog_bar=False,
             sync_dist=True,
         )
+        self._log_composite_member_losses("train", loss_parts)
 
         if torch.isnan(y_hat["logits"]).any():
             print("######################################### Model predicts NaNs!")
@@ -744,6 +790,7 @@ class BaseModel(L.LightningModule):
             prog_bar=False,
             sync_dist=True,
         )
+        self._log_composite_member_losses("val", val_loss_parts)
 
         if hasattr(self, "val_preds"):
             actual_batch_size = x.size(0)
@@ -751,7 +798,7 @@ class BaseModel(L.LightningModule):
             idx = torch.arange(
                 start_idx, start_idx + actual_batch_size, device=self.device
             )
-            if self.survival_loss_name in ("cox", "soft_logrank"):
+            if self.survival_primary_name in ("cox", "soft_logrank"):
                 self.val_preds.update(y_hat["risk"].detach())
             else:
                 self.val_preds.update(y_hat["survival_time"].detach())
@@ -790,7 +837,7 @@ class BaseModel(L.LightningModule):
                 preds_all = preds_all[sorted_idx]
                 labels_all = labels_all[sorted_idx]
 
-                if self.survival_loss_name == "soft_logrank":
+                if self.survival_primary_name == "soft_logrank":
                     columns = [
                         "GT_time_bin",
                         "GT_event",
@@ -809,7 +856,7 @@ class BaseModel(L.LightningModule):
                             p,
                             "high" if p >= 0.5 else "low",
                         ])
-                elif self.survival_loss_name == "cox":
+                elif self.survival_primary_name == "cox":
                     columns = [
                         "GT_time_bin",
                         "GT_event",

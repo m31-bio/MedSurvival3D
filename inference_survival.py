@@ -225,9 +225,19 @@ def _tensor_to_numpy(tensor):
 
 
 def _resolve_survival_loss_name(training_cfg):
-    """Read survival_loss.name from a checkpoint's training config, defaulting to 'nll'."""
+    """Read survival_loss.name from a checkpoint's training config, defaulting to 'nll'.
+
+    For a composite loss, resolve to its ``primary`` member, since that member's
+    head output is the one that drove training metrics and defines inference.
+    """
     cfg = training_cfg.model.get("survival_loss", {"name": "nll"})
-    return str(cfg.get("name", "nll")).lower()
+    name = str(cfg.get("name", "nll")).lower()
+    if name == "composite":
+        primary = cfg.get("primary")
+        if primary is None:
+            raise ValueError("composite survival_loss in checkpoint has no 'primary'.")
+        return str(primary).lower()
+    return name
 
 
 def run_split_inference(model, dataloader, dataset, device, split, fold):
