@@ -1,9 +1,43 @@
 # HANDOFF
 
 Session handoff for the next Claude working in `SSL3D_survival`. Read this
-before starting. Last updated: 2026-06-02.
+before starting. Last updated: 2026-06-15.
 
-## What this session did (all on `main`, committed)
+## Phase 1 package restructure — COMPLETE (2026-06-15, all on `main`)
+
+The monolithic top-level modules were split into the `medsurvival3d` package per
+`docs/superpowers/plans/2026-06-15-medsurvival3d-phase1.md` (Tasks 1–14 done).
+Behavior-preserving: every move was a verbatim relocation + import repoint; no
+logic changed. Final layout:
+
+- `medsurvival3d/utils/` — `survival_labels.py`, `io.py` (Blosc2IO)
+- `medsurvival3d/models/` — `losses.py`, `backbones/resenc.py`, `heads/survival_head.py`
+- `medsurvival3d/evaluation/metrics.py`
+- `medsurvival3d/training/` — `optim.py`, `trainer.py` (BaseModel, ModelConstructor)
+- `medsurvival3d/inference/survival.py`
+- `medsurvival3d/data/` — `base_datamodule.py`, `datamodules.py`, `survival.py`,
+  `batchgenerators_transforms.py`, `preprocessing/`
+
+**Four `_target_` shims intentionally KEPT** (Hydra configs still reference old paths
+until Phase 2 rewrites them): `datasets/coca_t1c_combined_b2nd.py`,
+`datasets/survival.py`, `models/resenc.py`, `augmentation/policies/batchgenerators.py`
+(+ their `__init__` chains). All other transition shims were deleted (Task 13).
+`main.py` needed no import changes (fully Hydra `instantiate`-driven).
+
+**Verified locally:** acyclic internal import graph (static AST check), full
+`compileall` of package + `main.py` + `tests/`, and `pytest tests/test_loss_factory.py
+-k composite` (11 passed). Also fixed `.gitignore` (`data/` → `/data/`) so the package
+`data/` subdir is trackable.
+
+**⚠️ CLUSTER GATE PENDING (not yet verified):** the full test suite and a training
+smoke run need cluster-only deps (lightning, pycox, torchsurv, madgrad, timm, wandb,
+sksurv, batchgeneratorsv2) absent locally. Before relying on this restructure:
+1. On the cluster, run the full `pytest tests/` suite.
+2. Launch one short training run (e.g. an `methylome_t1c_combined_*` config) to confirm
+   Hydra `_target_` resolution through the kept shims and end-to-end import of
+   `medsurvival3d.training.trainer` / `models.backbones.resenc`.
+
+## What earlier sessions did (all on `main`, committed)
 
 1. **`9ca81f2` — per-loss config suite.** Added 8 ready-to-train t1c configs,
    one per survival loss, under `cli_configs/data/`:
