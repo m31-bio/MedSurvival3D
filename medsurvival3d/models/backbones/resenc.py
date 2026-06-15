@@ -5,7 +5,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch._dynamo import OptimizedModule
 import torch.distributed as dist
 
-from base_model import BaseModel
+from medsurvival3d.training.trainer import BaseModel
 from medsurvival3d.models.heads.survival_head import SurvivalHead
 
 
