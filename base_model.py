@@ -32,20 +32,7 @@ from medsurvival3d.training.optim import (
     CosineAnnealingLR_Warmstart,
     CosineAnnealingLR_DoubleWarmstart,
 )
-
-
-_SURVIVAL_LOSS_TAGS = {
-    "nll": "NLL",
-    "cox": "CoxPH",
-    "deephit": "DeepHit",
-    "soft_logrank": "SoftLogRank",
-    "weibull": "Weibull",
-    "pmf": "PMF",
-    "mtlr": "MTLR",
-    "bcesurv": "BCESurv",
-    "pchazard": "PCHazard",
-    "composite": "Composite",
-}
+from medsurvival3d.models.losses import call_one_loss, _SURVIVAL_LOSS_TAGS
 
 
 class BaseModel(L.LightningModule):
@@ -271,30 +258,10 @@ class BaseModel(L.LightningModule):
         return survival_label_tensor(time_bin, event)
 
     def _call_one_loss(self, name, criterion, y_hat, time_bin, event, continuous_time):
-        """Run one survival criterion, returning ``(loss_tensor, components)``.
-
-        Maps the stable ``y_hat`` dict to the input each loss expects.
-        ``components`` is the soft_logrank diagnostics dict (empty otherwise).
-        """
-        if name == "nll":
-            return criterion(y_hat["logits"], time_bin, event), {}
-        if name == "cox":
-            return criterion(y_hat["risk"], continuous_time, event), {}
-        if name == "deephit":
-            return criterion(y_hat["pmf_logits"], time_bin, event), {}
-        if name == "soft_logrank":
-            total, components = criterion(y_hat["p_high"], continuous_time, event)
-            return total, components
-        if name == "pmf":
-            return criterion(y_hat["pmf_logits"], time_bin, event), {}
-        if name in ("mtlr", "bcesurv"):
-            return criterion(y_hat["logits"], time_bin, event), {}
-        if name == "weibull":
-            return criterion(y_hat["weibull_params"], continuous_time, event), {}
-        if name == "pchazard":
-            interval_frac = self._interval_frac(continuous_time, time_bin)
-            return criterion(y_hat["logits"], time_bin, event, interval_frac), {}
-        raise ValueError(f"Unexpected survival_loss_name: {name!r}")
+        return call_one_loss(
+            name, criterion, y_hat, time_bin, event, continuous_time,
+            self._survival_bin_edges,
+        )
 
     def _log_composite_member_losses(self, split, loss_parts):
         """Log each composite member's UNWEIGHTED loss so weights are tunable.
