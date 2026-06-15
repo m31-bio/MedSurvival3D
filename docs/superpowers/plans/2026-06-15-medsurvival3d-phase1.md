@@ -707,7 +707,9 @@ All importers now use final paths, so the shims are orphans created by this work
 
 **Files:**
 - Delete: `survival_utils.py`, `base_model.py`, `inference_survival.py`
-- Delete: `models/resenc.py`, `models/survival_head.py`, `models/__init__.py` (old top-level `models/`)
+- Delete: `models/survival_head.py` (old top-level shim; NOT `_target_`-referenced)
+- Keep: `models/resenc.py`, `models/__init__.py` — `models.resenc.ResEncoder_Survival`
+  is referenced by `cli_configs/model/resenc_survival.yaml` `_target_`
 - Delete: old `datasets/` and `augmentation/` shims **except** any module a Hydra
   `_target_` still references (see note)
 
@@ -720,23 +722,31 @@ Expected: only matches inside config `_target_` strings (handled in Phase 2), no
 
 - [ ] **Step 2: Handle Hydra `_target_` references**
 
-`cli_configs/**/*.yaml` reference `datasets.coca_t1c_combined_b2nd.*` and
-`augmentation.policies.batchgenerators.*`. Phase 1 does **not** edit configs, so
-**keep exactly those two shim files** (`datasets/coca_t1c_combined_b2nd.py`,
+`cli_configs/**/*.yaml` reference FOUR moved modules via `_target_` (verified by
+`grep -rhoE "_target_: (datasets|augmentation|models)\.[A-Za-z0-9_.]+" cli_configs`):
+`datasets.coca_t1c_combined_b2nd.*`, `augmentation.policies.batchgenerators.*`,
+`datasets.survival.SurvivalDataModule` (cli_configs/data/survival.yaml), and
+`models.resenc.ResEncoder_Survival` (cli_configs/model/resenc_survival.yaml).
+Phase 1 does **not** edit configs, so **keep all four shim files**
+(`datasets/coca_t1c_combined_b2nd.py`, `datasets/survival.py`, `models/resenc.py`,
 `augmentation/policies/batchgenerators.py`, plus the `__init__.py` chain needed to
 import them) until Phase 2 rewrites the configs. Delete all other shims.
+NOTE: do NOT rely on the Step 1 grep's `| grep -v medsurvival3d/` to find these —
+`_target_` strings live in YAML, so scan `cli_configs/` separately as shown above.
 
 - [ ] **Step 3: Delete the confirmed-orphan shims**
 
 ```bash
-git rm survival_utils.py base_model.py inference_survival.py models/resenc.py models/survival_head.py
+git rm survival_utils.py base_model.py inference_survival.py models/survival_head.py
 # Delete only the datasets/augmentation shims NOT referenced by a _target_:
-git rm datasets/base_datamodule.py datasets/blosc2io.py datasets/survival.py
+git rm datasets/base_datamodule.py datasets/blosc2io.py
 git rm -r datasets/preprocess_3D_data
 ```
-(Leave `datasets/coca_t1c_combined_b2nd.py`, `datasets/__init__.py`,
+(Leave the four `_target_` shims + their `__init__` chain for Phase 2:
+`datasets/coca_t1c_combined_b2nd.py`, `datasets/survival.py`, `datasets/__init__.py`,
+`models/resenc.py`, `models/__init__.py`,
 `augmentation/policies/batchgenerators.py`, `augmentation/__init__.py`,
-`augmentation/policies/__init__.py` as `_target_` shims for Phase 2.)
+`augmentation/policies/__init__.py`.)
 
 - [ ] **Step 4: Byte-compile + dependency-free tests**
 
@@ -746,8 +756,12 @@ Expected: compile clean; tests PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A
-git commit -m "refactor: remove transition shims; keep _target_ shims for Phase 2"
+# Stage the deletions explicitly — do NOT `git add -A` (it sweeps in
+# untracked .codegraph/.gitignore and any other stray files).
+git add -u survival_utils.py base_model.py inference_survival.py models/survival_head.py \
+  datasets/base_datamodule.py datasets/blosc2io.py datasets/preprocess_3D_data
+git status --porcelain   # verify: only the intended deletions are staged
+git commit -m "refactor: remove orphaned transition shims (keep _target_ shims for Phase 2)"
 ```
 
 ---
