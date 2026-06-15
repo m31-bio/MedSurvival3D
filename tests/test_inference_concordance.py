@@ -1,7 +1,7 @@
 import numpy as np
 from sksurv.metrics import concordance_index_censored
 from tests._characterization_data import make_cohort
-from inference_survival import sksurv_cindex
+from medsurvival3d.inference.survival import sksurv_cindex
 
 
 def test_cindex_matches_sksurv_reference():

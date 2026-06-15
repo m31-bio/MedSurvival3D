@@ -11,27 +11,27 @@ sys.path.insert(0, str(ROOT))
 
 def test_nll_curve_is_cumprod_hazard():
     phi = torch.randn(5, 8)
-    from models.survival_head import logits_to_survival
+    from medsurvival3d.models.heads.survival_head import logits_to_survival
     s = logits_to_survival("nll", phi)
     assert torch.allclose(s, torch.cumprod(1 - torch.sigmoid(phi), dim=1), atol=1e-6)
 
 
 def test_pmf_curve_is_one_minus_cumsum_softmax():
     phi = torch.randn(5, 8)
-    from models.survival_head import logits_to_survival
+    from medsurvival3d.models.heads.survival_head import logits_to_survival
     s = logits_to_survival("pmf", phi)
     assert torch.allclose(s, 1 - torch.softmax(phi, 1).cumsum(1), atol=1e-6)
 
 
 def test_bcesurv_curve_is_sigmoid():
     phi = torch.randn(5, 8)
-    from models.survival_head import logits_to_survival
+    from medsurvival3d.models.heads.survival_head import logits_to_survival
     s = logits_to_survival("bcesurv", phi)
     assert torch.allclose(s, torch.sigmoid(phi), atol=1e-6)
 
 
 def test_curves_are_in_unit_range():
-    from models.survival_head import logits_to_survival
+    from medsurvival3d.models.heads.survival_head import logits_to_survival
     for name in ("nll", "pmf", "deephit", "bcesurv", "mtlr", "pchazard"):
         phi = torch.randn(6, 10)
         s = logits_to_survival(name, phi)
@@ -40,7 +40,7 @@ def test_curves_are_in_unit_range():
 
 
 def test_curves_are_monotone_nonincreasing():
-    from models.survival_head import logits_to_survival
+    from medsurvival3d.models.heads.survival_head import logits_to_survival
     # bcesurv applies sigmoid independently per time-bin — not constrained to be
     # monotone by design (matches pycox BceSurv behaviour).
     for name in ("nll", "pmf", "deephit", "mtlr", "pchazard"):
@@ -61,7 +61,7 @@ def test_mtlr_curve_matches_pycox_oracle():
     import numpy as np
     import torch.nn as nn
     from pycox.models import MTLR
-    from models.survival_head import logits_to_survival
+    from medsurvival3d.models.heads.survival_head import logits_to_survival
 
     phi = torch.randn(5, 8)
 
@@ -93,7 +93,7 @@ def test_pchazard_curve_matches_pycox_oracle():
     import numpy as np
     import torch.nn as nn
     from pycox.models import PCHazard
-    from models.survival_head import logits_to_survival
+    from medsurvival3d.models.heads.survival_head import logits_to_survival
 
     B, K = 5, 8
     phi = torch.randn(B, K)

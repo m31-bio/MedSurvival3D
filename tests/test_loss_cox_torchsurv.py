@@ -1,6 +1,6 @@
 import torch
 from torchsurv.loss import cox
-from survival_utils import CoxPHLoss
+from medsurvival3d.models.losses import CoxPHLoss
 from tests._characterization_data import make_cohort, as_torch
 
 

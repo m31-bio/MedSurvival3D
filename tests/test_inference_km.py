@@ -1,7 +1,7 @@
 import numpy as np
 from lifelines import KaplanMeierFitter
 from tests._characterization_data import make_cohort
-from inference_survival import km_survival_at
+from medsurvival3d.inference.survival import km_survival_at
 
 
 def test_km_at_horizon_matches_lifelines():
@@ -14,7 +14,7 @@ def test_km_at_horizon_matches_lifelines():
 
 
 def test_km_step_curve_matches_lifelines():
-    from inference_survival import km_step_curve
+    from medsurvival3d.inference.survival import km_step_curve
     _, time, event, _ = make_cohort(distinct=True, seed=5)
     t, s = km_step_curve(time, event)
     kmf = KaplanMeierFitter().fit(time, event)

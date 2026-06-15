@@ -1,6 +1,6 @@
 import torch
 from torchsurv.loss import weibull
-from survival_utils import build_survival_criterion
+from medsurvival3d.models.losses import build_survival_criterion
 from tests._characterization_data import make_cohort, as_torch
 
 
@@ -17,7 +17,7 @@ def test_weibull_matches_torchsurv():
 
 def test_weibull_head_curve_monotone_unit_range():
     import torch
-    from models.survival_head import SurvivalHead
+    from medsurvival3d.models.heads.survival_head import SurvivalHead
     head = SurvivalHead(input_dim=16, num_time_bins=10, survival_loss_name="weibull")
     out = head(torch.randn(6, 16))
     s = out["survival"]

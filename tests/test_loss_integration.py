@@ -10,8 +10,8 @@ import torch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from models.survival_head import SurvivalHead  # noqa: E402
-from survival_utils import build_survival_criterion  # noqa: E402
+from medsurvival3d.models.heads.survival_head import SurvivalHead  # noqa: E402
+from medsurvival3d.models.losses import build_survival_criterion  # noqa: E402
 
 
 def _backward_for(name, cfg=None):

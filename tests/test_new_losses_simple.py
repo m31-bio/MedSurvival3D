@@ -1,5 +1,5 @@
 import torch
-from survival_utils import build_survival_criterion
+from medsurvival3d.models.losses import build_survival_criterion
 from tests._characterization_data import make_cohort, as_torch
 
 

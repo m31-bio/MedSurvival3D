@@ -9,7 +9,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from survival_utils import max_logrank_cutpoint  # noqa: E402
+from medsurvival3d.evaluation.metrics import max_logrank_cutpoint  # noqa: E402
 
 
 def _separable_dataset(n_per_group=40, seed=0):
@@ -61,7 +61,7 @@ def test_nan_when_zero_events():
 
 def test_candidate_cap_limits_evaluations(monkeypatch):
     """Helper must cap chi^2 evaluations even for large unique-score inputs."""
-    import survival_utils
+    import medsurvival3d.evaluation.metrics as survival_utils
 
     call_count = {"n": 0}
     original = survival_utils._logrank_chi2  # internal name used by max_logrank_cutpoint
@@ -82,7 +82,7 @@ def test_candidate_cap_limits_evaluations(monkeypatch):
 def test_chi2_matches_lifelines():
     import numpy as np
     from lifelines.statistics import logrank_test
-    from survival_utils import _logrank_chi2
+    from medsurvival3d.evaluation.metrics import _logrank_chi2
     rng = np.random.default_rng(7)
     t = rng.integers(1, 20, size=100).astype(float)
     e = (rng.random(100) > 0.4).astype(int)

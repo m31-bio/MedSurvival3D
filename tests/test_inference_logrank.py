@@ -1,7 +1,7 @@
 import numpy as np
 from lifelines.statistics import logrank_test
 from tests._characterization_data import make_cohort
-from inference_survival import compute_logrank_stat
+from medsurvival3d.inference.survival import compute_logrank_stat
 
 
 def test_logrank_matches_lifelines():

@@ -9,7 +9,7 @@ import torch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from survival_utils import (  # noqa: E402
+from medsurvival3d.models.losses import (  # noqa: E402
     group_balance_penalty,
     soft_logrank_loss,
 )

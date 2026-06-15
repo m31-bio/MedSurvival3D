@@ -11,7 +11,7 @@ from pycox.models.data import pair_rank_mat
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from survival_utils import DeepHitLoss  # noqa: E402
+from medsurvival3d.models.losses import DeepHitLoss  # noqa: E402
 from tests._characterization_data import make_cohort, as_torch
 
 

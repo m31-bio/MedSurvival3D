@@ -9,7 +9,7 @@ from pycox.models.loss import NLLPCHazardLoss
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from survival_utils import PCHazardLoss, build_survival_criterion  # noqa: E402
+from medsurvival3d.models.losses import PCHazardLoss, build_survival_criterion  # noqa: E402
 from tests._characterization_data import make_cohort, as_torch  # noqa: E402
 
 
@@ -43,7 +43,7 @@ def test_pchazard_loss_finite_mixed_censoring():
 
 
 def test_pchazard_surv_shape_and_range():
-    from models.survival_head import logits_to_survival
+    from medsurvival3d.models.heads.survival_head import logits_to_survival
     phi = torch.randn(6, 10)
     s = logits_to_survival("pchazard", phi)
     assert s.shape == (6, 10), s.shape
@@ -52,7 +52,7 @@ def test_pchazard_surv_shape_and_range():
 
 
 def test_pchazard_surv_monotone_nonincreasing():
-    from models.survival_head import logits_to_survival
+    from medsurvival3d.models.heads.survival_head import logits_to_survival
     phi = torch.randn(6, 10)
     s = logits_to_survival("pchazard", phi)
     diffs = s[:, 1:] - s[:, :-1]
@@ -70,7 +70,7 @@ def test_pchazard_surv_oracle_pycox():
     import numpy as np
     import torch.nn as nn
     from pycox.models import PCHazard
-    from models.survival_head import logits_to_survival
+    from medsurvival3d.models.heads.survival_head import logits_to_survival
 
     B, K = 5, 8
     phi = torch.randn(B, K)

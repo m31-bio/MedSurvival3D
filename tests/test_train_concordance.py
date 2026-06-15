@@ -1,6 +1,6 @@
 import torch
 from torchsurv.metrics.cindex import ConcordanceIndex
-from survival_utils import concordance_index
+from medsurvival3d.evaluation.metrics import concordance_index
 from tests._characterization_data import make_cohort, as_torch
 
 

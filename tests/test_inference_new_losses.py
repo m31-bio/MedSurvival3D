@@ -6,7 +6,7 @@ Run with:
 import numpy as np
 import pytest
 
-from inference_survival import CURVE_LOSSES, compute_metrics
+from medsurvival3d.inference.survival import CURVE_LOSSES, compute_metrics
 
 
 # ---------------------------------------------------------------------------

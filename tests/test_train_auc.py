@@ -1,6 +1,6 @@
 import torch
 from torchsurv.metrics.auc import Auc
-from survival_utils import time_dependent_auc
+from medsurvival3d.evaluation.metrics import time_dependent_auc
 from tests._characterization_data import make_cohort, as_torch
 
 

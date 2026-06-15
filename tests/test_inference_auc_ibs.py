@@ -2,7 +2,7 @@ import numpy as np
 from sksurv.util import Surv
 from sksurv.metrics import integrated_brier_score
 from tests._characterization_data import make_cohort
-from inference_survival import sksurv_ibs
+from medsurvival3d.inference.survival import sksurv_ibs
 
 
 def _prep():

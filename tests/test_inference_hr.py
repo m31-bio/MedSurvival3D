@@ -1,6 +1,6 @@
 import numpy as np
 from tests._characterization_data import make_cohort
-from inference_survival import compute_hazard_ratio
+from medsurvival3d.inference.survival import compute_hazard_ratio
 
 
 def test_hr_greater_than_one_when_high_group_dies_first():

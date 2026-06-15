@@ -1,6 +1,6 @@
 import torch
 from torchsurv.metrics.brier_score import BrierScore
-from survival_utils import integrated_brier_score, integrated_brier_score_ipcw
+from medsurvival3d.evaluation.metrics import integrated_brier_score, integrated_brier_score_ipcw
 from tests._characterization_data import make_cohort, as_torch
 
 
@@ -23,6 +23,6 @@ def test_train_ibs_matches_torchsurv_brier_at_grid():
     bs = BrierScore()
     bs(est, e.bool(), t.float(), new_time=times.float())
     want = float(bs.integral())
-    from survival_utils import _ibs_torchsurv  # helper added in step 3
+    from medsurvival3d.evaluation.metrics import _ibs_torchsurv  # helper added in step 3
     got = _ibs_torchsurv(s, t, e, times, weight=None)
     assert abs(got - want) < 1e-5

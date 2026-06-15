@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT))
 # -------- Score derivation tests --------
 
 def test_derive_scores_cox_returns_risks_directly():
-    from survival_utils import derive_stratification_scores
+    from medsurvival3d.evaluation.metrics import derive_stratification_scores
 
     risks = np.array([0.1, 0.5, -0.3, 1.2])
     out = derive_stratification_scores("cox", risks=risks, survival_curves=None, landmark_bin_idx=2)
@@ -24,7 +24,7 @@ def test_derive_scores_cox_returns_risks_directly():
 
 
 def test_derive_scores_soft_logrank_returns_risks_directly():
-    from survival_utils import derive_stratification_scores
+    from medsurvival3d.evaluation.metrics import derive_stratification_scores
 
     risks = np.array([-2.0, 0.0, 0.5, 3.0])
     out = derive_stratification_scores("soft_logrank", risks=risks, survival_curves=None, landmark_bin_idx=0)
@@ -32,7 +32,7 @@ def test_derive_scores_soft_logrank_returns_risks_directly():
 
 
 def test_derive_scores_nll_returns_one_minus_survival_at_landmark():
-    from survival_utils import derive_stratification_scores
+    from medsurvival3d.evaluation.metrics import derive_stratification_scores
 
     survival_curves = np.array([
         [0.9, 0.7, 0.5, 0.2],  # patient 0
@@ -45,7 +45,7 @@ def test_derive_scores_nll_returns_one_minus_survival_at_landmark():
 
 
 def test_derive_scores_deephit_returns_one_minus_survival_at_landmark():
-    from survival_utils import derive_stratification_scores
+    from medsurvival3d.evaluation.metrics import derive_stratification_scores
 
     survival_curves = np.array([
         [0.8, 0.6, 0.4, 0.2],
@@ -58,7 +58,7 @@ def test_derive_scores_deephit_returns_one_minus_survival_at_landmark():
 
 
 def test_derive_scores_unknown_loss_raises():
-    from survival_utils import derive_stratification_scores
+    from medsurvival3d.evaluation.metrics import derive_stratification_scores
 
     with pytest.raises(ValueError, match="Unknown survival_loss_name"):
         derive_stratification_scores(
@@ -105,7 +105,7 @@ def _make_kwargs(**overrides):
 
 
 def test_stratification_config_defaults():
-    from base_model import BaseModel
+    from medsurvival3d.training.trainer import BaseModel
 
     model = BaseModel(**_make_kwargs())
     assert model.survival_stratification_landmark_year == 5.0
@@ -113,7 +113,7 @@ def test_stratification_config_defaults():
 
 
 def test_stratification_config_explicit_values():
-    from base_model import BaseModel
+    from medsurvival3d.training.trainer import BaseModel
 
     model = BaseModel(**_make_kwargs(
         survival_stratification_landmark_year=3.0,
@@ -124,7 +124,7 @@ def test_stratification_config_explicit_values():
 
 
 def test_stratification_quantile_range_validation():
-    from base_model import BaseModel
+    from medsurvival3d.training.trainer import BaseModel
 
     with pytest.raises(ValueError, match="quantile_range"):
         BaseModel(**_make_kwargs(
@@ -133,21 +133,21 @@ def test_stratification_quantile_range_validation():
 
 
 def test_soft_logrank_use_max_logrank_cutpoint_default_false():
-    from base_model import BaseModel
+    from medsurvival3d.training.trainer import BaseModel
 
     model = BaseModel(**_make_kwargs())
     assert model.soft_logrank_use_max_logrank_cutpoint is False
 
 
 def test_soft_logrank_use_max_logrank_cutpoint_explicit_true():
-    from base_model import BaseModel
+    from medsurvival3d.training.trainer import BaseModel
 
     model = BaseModel(**_make_kwargs(soft_logrank_use_max_logrank_cutpoint=True))
     assert model.soft_logrank_use_max_logrank_cutpoint is True
 
 
 def test_soft_logrank_use_max_logrank_cutpoint_coerces_truthy():
-    from base_model import BaseModel
+    from medsurvival3d.training.trainer import BaseModel
 
     model = BaseModel(**_make_kwargs(soft_logrank_use_max_logrank_cutpoint=1))
     assert model.soft_logrank_use_max_logrank_cutpoint is True
@@ -190,7 +190,7 @@ def _make_stub_model(loss_name, train_risks, val_risks, train_times, val_times,
     stub._stratification_landmark_bin_warned = False
     # Bind the unbound method so `self._resolve_stratification_landmark_bin()`
     # in _compute_stratification_metrics resolves correctly on the stub.
-    from base_model import BaseModel
+    from medsurvival3d.training.trainer import BaseModel
     stub._resolve_stratification_landmark_bin = lambda: BaseModel._resolve_stratification_landmark_bin(stub)
     stub.trainer = types.SimpleNamespace(sanity_checking=False)
     stub.log = _StubLogger()
@@ -198,7 +198,7 @@ def _make_stub_model(loss_name, train_risks, val_risks, train_times, val_times,
 
 
 def _invoke(stub):
-    from base_model import BaseModel
+    from medsurvival3d.training.trainer import BaseModel
 
     BaseModel._compute_stratification_metrics(stub)
 
@@ -312,7 +312,7 @@ def test_strat_metrics_soft_logrank_flag_off_matches_zero_cutoff():
     _invoke(stub_off)
 
     # Baseline: compute chi2 directly at cutoff=0 (matches current branch).
-    from inference_survival import compute_logrank_stat
+    from medsurvival3d.inference.survival import compute_logrank_stat
     group_high = train_risks > 0.0
     expected_chi2, _ = compute_logrank_stat(train_times, train_events, group_high)
     assert math.isclose(
@@ -382,7 +382,7 @@ def test_strat_metrics_soft_logrank_flag_on_nan_cutpoint_yields_nan_metrics():
 # -------- on_save_checkpoint bundling tests --------
 
 def test_on_save_checkpoint_bundles_finite_cutpoint():
-    from base_model import BaseModel
+    from medsurvival3d.training.trainer import BaseModel
 
     stub = types.SimpleNamespace()
     stub._stratification_cutpoint = 0.42
@@ -392,7 +392,7 @@ def test_on_save_checkpoint_bundles_finite_cutpoint():
 
 
 def test_on_save_checkpoint_omits_when_cutpoint_is_none():
-    from base_model import BaseModel
+    from medsurvival3d.training.trainer import BaseModel
 
     stub = types.SimpleNamespace()
     stub._stratification_cutpoint = None
@@ -403,7 +403,7 @@ def test_on_save_checkpoint_omits_when_cutpoint_is_none():
 
 def test_on_save_checkpoint_omits_when_attribute_missing():
     """If validation never ran, the attribute is absent and no key is added."""
-    from base_model import BaseModel
+    from medsurvival3d.training.trainer import BaseModel
 
     stub = types.SimpleNamespace()
     checkpoint = {"state_dict": {}}

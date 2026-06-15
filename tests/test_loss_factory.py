@@ -7,7 +7,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from survival_utils import (  # noqa: E402
+from medsurvival3d.models.losses import (  # noqa: E402
     CoxPHLoss,
     DeepHitLoss,
     NLLSurvLoss,
@@ -70,7 +70,7 @@ def test_legacy_cox_loss_lambda_rejected():
 
 
 def test_soft_logrank_defaults():
-    from survival_utils import SoftLogRankLoss  # noqa: WPS433
+    from medsurvival3d.models.losses import SoftLogRankLoss  # noqa: WPS433
     name, fn = build_survival_criterion({"name": "soft_logrank"}, num_time_bins=5)
     assert name == "soft_logrank"
     assert isinstance(fn, SoftLogRankLoss)
@@ -80,7 +80,7 @@ def test_soft_logrank_defaults():
 
 
 def test_soft_logrank_reads_hyperparameters():
-    from survival_utils import SoftLogRankLoss  # noqa: WPS433
+    from medsurvival3d.models.losses import SoftLogRankLoss  # noqa: WPS433
     cfg = {
         "name": "soft_logrank",
         "lambda_balance": 0.02,
@@ -108,7 +108,7 @@ def test_all_names_build(name):
 # block WITHOUT constructing any pycox/torchsurv loss objects.
 
 def test_parse_composite_basic():
-    from survival_utils import _parse_composite  # noqa: WPS433
+    from medsurvival3d.models.losses import _parse_composite  # noqa: WPS433
     cfg = {
         "name": "composite",
         "primary": "nll",
@@ -126,7 +126,7 @@ def test_parse_composite_basic():
 
 
 def test_parse_composite_defaults_weight_to_one():
-    from survival_utils import _parse_composite  # noqa: WPS433
+    from medsurvival3d.models.losses import _parse_composite  # noqa: WPS433
     cfg = {
         "name": "composite",
         "primary": "cox",
@@ -137,7 +137,7 @@ def test_parse_composite_defaults_weight_to_one():
 
 
 def _expect_value_error(cfg, needle):
-    from survival_utils import _parse_composite  # noqa: WPS433
+    from medsurvival3d.models.losses import _parse_composite  # noqa: WPS433
     try:
         _parse_composite(cfg)
     except ValueError as exc:

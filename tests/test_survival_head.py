@@ -8,7 +8,7 @@ import torch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from models.survival_head import SurvivalHead  # noqa: E402
+from medsurvival3d.models.heads.survival_head import SurvivalHead  # noqa: E402
 
 
 REQUIRED_KEYS = {"logits", "hazard", "pmf", "risk", "survival", "survival_time"}
@@ -94,7 +94,7 @@ def test_p_high_present_in_all_modes_and_matches_sigmoid_of_risk():
 
 def test_pmf_logits_present_and_raw():
     import torch
-    from models.survival_head import SurvivalHead
+    from medsurvival3d.models.heads.survival_head import SurvivalHead
     head = SurvivalHead(input_dim=32, num_time_bins=10, survival_loss_name="deephit")
     out = head(torch.randn(4, 32))
     assert "pmf_logits" in out and out["pmf_logits"].shape == (4, 10)

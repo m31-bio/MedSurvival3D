@@ -1,6 +1,6 @@
 import torch
 from pycox.models.loss import NLLLogistiHazardLoss
-from survival_utils import NLLSurvLoss
+from medsurvival3d.models.losses import NLLSurvLoss
 from tests._characterization_data import make_cohort, as_torch
 
 

@@ -9,7 +9,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from inference_survival import (  # noqa: E402
+from medsurvival3d.inference.survival import (  # noqa: E402
     _checkpoint_stratification_cutpoint,
     compute_hazard_ratio,
     compute_logrank_stat,

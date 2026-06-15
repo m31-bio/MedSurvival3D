@@ -2,8 +2,8 @@ import numpy as np
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-import base_model
-from survival_utils import derive_stratification_scores
+import medsurvival3d.training.trainer as base_model
+from medsurvival3d.evaluation.metrics import derive_stratification_scores
 
 
 def test_all_curve_losses_have_tags():
