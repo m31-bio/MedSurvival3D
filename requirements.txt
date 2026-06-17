@@ -18,3 +18,19 @@ blosc2>=3.0.0
 peft>=0.14.0
 git+https://github.com/MIC-DKFZ/acvl_utils.git
 hd-bet
+
+# --- Survival analysis stack (imported by medsurvival3d; previously missing) ---
+pycox
+torchsurv
+lifelines
+scikit-survival
+scikit-learn
+scipy
+pandas
+
+# --- Preprocessing tier (only needed to prep raw data; not required to train on
+#     already-preprocessed data) ---
+SimpleITK
+scikit-image
+nnunetv2
+batchgenerators
