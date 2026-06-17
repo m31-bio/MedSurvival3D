@@ -1,7 +1,7 @@
 # HANDOFF
 
 Session handoff for the next Claude working in `SSL3D_survival`. Read this
-before starting. Last updated: 2026-06-15.
+before starting. Last updated: 2026-06-17.
 
 ## Phase 1 package restructure — COMPLETE (2026-06-15, all on `main`)
 
@@ -29,13 +29,35 @@ until Phase 2 rewrites them): `datasets/coca_t1c_combined_b2nd.py`,
 -k composite` (11 passed). Also fixed `.gitignore` (`data/` → `/data/`) so the package
 `data/` subdir is trackable.
 
-**⚠️ CLUSTER GATE PENDING (not yet verified):** the full test suite and a training
-smoke run need cluster-only deps (lightning, pycox, torchsurv, madgrad, timm, wandb,
-sksurv, batchgeneratorsv2) absent locally. Before relying on this restructure:
-1. On the cluster, run the full `pytest tests/` suite.
-2. Launch one short training run (e.g. an `methylome_t1c_combined_*` config) to confirm
-   Hydra `_target_` resolution through the kept shims and end-to-end import of
-   `medsurvival3d.training.trainer` / `models.backbones.resenc`.
+**CLUSTER GATE — PASSED (2026-06-17, workstation `aihub2.uniseg`). Phase 1 fully verified.**
+
+1. ✅ **Full `pytest tests/` ran** on the workstation `.venv` (torch 2.12.0+cu130,
+   py3.12): **131 passed, 14 failed — zero restructure regressions.** All 14 are
+   pre-existing or environment artifacts, NOT caused by the restructure:
+   - 11× `test_stratification_metrics` — stub sets `survival_loss_name`, code reads
+     `survival_primary_name`. Verified pre-existing: `survival_primary_name` entered
+     `_compute_stratification_metrics` in `9dc125b` (composite loss, pre-restructure),
+     which did NOT touch the test; current `trainer.py:551` is byte-identical to the
+     pre-restructure `base_model.py` line.
+   - 2× `test_pchazard_*` pycox oracle — `.numpy()` on a CUDA tensor; only fires on a GPU box.
+   - 1× `test_balance_zero_inside_range` — `3.5e-15 == 0.0` exact-equality on newer torch/BLAS.
+2. ✅ **Training smoke PASSED** (`fast_dev_run`, full pipeline on REAL SSL weights).
+   Ran from repo root with `WANDB_MODE=offline`:
+   `main.py env=local data=methylome_t1c_combined_high_vs_low data.cv.k=1 data.module.fold=0`
+   `exp_dir=/home/jma/scratch/ssl3d_smoke`
+   `model.chpt_path=.../SSL3D_classification/checkpoints/S3D/checkpoint_final.pth`
+   `model.save_preds=false trainer.enable_progress_bar=false trainer.callbacks.progressbar=null`
+   `+trainer.fast_dev_run=true`.
+   All four `_target_` shims resolved at runtime: 102M-param model built, SSL checkpoint
+   loaded (single→2 input channels), datamodule + augmentation built, one train+val batch
+   ran fwd/backward → `Trainer.fit stopped: max_steps=1 reached`. Gotchas confirmed:
+   (a) progress bar MUST be disabled over non-interactive SSH (rich `clear_live()` →
+   `IndexError: pop from empty list` otherwise); (b) leave `seed` UNSET so
+   `deterministic=False`, avoiding the `avg_pool3d` non-deterministic-CUDA backward crash.
+   Correction to a prior note: `survival_labels.json` + `splits_balanced_survival.json`
+   ARE present in `Dataset019_UHN_Mayo_T1c_mask/` (earlier "mismatch" was a truncated `ls`).
+
+Note: `pytest` was installed into the workstation `.venv` (not in `requirements.txt`).
 
 ## What earlier sessions did (all on `main`, committed)
 

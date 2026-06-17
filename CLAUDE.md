@@ -67,3 +67,39 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+---
+
+## Workstation workflow
+
+Edit + reason on the **Mac** (source, git, CodeGraph live here). Execute on the
+**workstation** (GPU, venv, data live there). The Mac has NO survival deps and
+NO CUDA — it cannot reproduce most failures. Loop is: fix → rsync → test remote.
+The workstation is the only source of truth for pass/fail.
+
+- **Target:** `jma@aihub2.uniseg:/home/jma/Documents/projects/safwat/coca_classifier_codebase/SSL3D_survival/`
+- **SSH** is key-based/non-interactive. Use `-o BatchMode=yes` to fail fast.
+- **`uv` not on non-interactive PATH** — prepend `export PATH=$HOME/.local/bin:$PATH`.
+- **Venv is `.venv`** (uv-created, NO pip): install via `uv pip install`, run via `.venv/bin/python`.
+- **rsync MUST exclude** `.venv .git .codegraph .hpo_agent __pycache__ .pytest_cache *.pyc`
+  — else the Mac's CPU torch overwrites the workstation's CUDA env.
+- **Always run from repo root** (no `pyproject.toml` yet; imports resolve via cwd).
+- **`main.py` needs overrides:** `model.chpt_path=...`, `model.save_preds=false`,
+  omit `seed`, `+trainer.fast_dev_run=true`. Bare run crashes on `torch.load(None)`.
+
+**Failure-classification rule:** before fixing ANY failing test, classify it as
+*restructure regression* vs *pre-existing / env / test-bug*. Don't rewrite working
+production code to satisfy a fragile test.
+
+## Session hygiene
+
+- **Update `HANDOFF.md` at each completed milestone** — record what is verified vs.
+  unverified, and what the next session should pick up. Keep it always-current so any
+  session can resume cold. (Transient status here; durable invariants stay in this file.)
+- **Stop and recommend `/clear` at milestone boundaries** — when a distinct phase of work
+  finishes (or when responses show context strain: repetition, forgetting earlier
+  decisions), pause and explicitly recommend starting a fresh session. State what's saved
+  in `HANDOFF.md` and what the next session should do first. Do NOT silently roll into a
+  new distinct phase without recommending the reset.
+- Trigger is *milestone / judgment*, NOT a context-% meter (Claude cannot reliably sense
+  its own context size). The actual restart (`/clear`) is always the user's call.
