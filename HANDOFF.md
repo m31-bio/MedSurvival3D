@@ -1,7 +1,32 @@
 # HANDOFF
 
 Session handoff for the next Claude working in `SSL3D_survival`. Read this
-before starting. Last updated: 2026-06-18.
+before starting. Last updated: 2026-06-22.
+
+## Phase 2 — Hydra `_target_` repoint + shim removal COMPLETE (2026-06-22, VERIFIED on workstation, NOT yet committed)
+
+The 4 legacy `_target_` shims kept after Phase 1 are now retired. All 14 Hydra
+configs point directly at `medsurvival3d`; the shim files and their empty legacy
+package dirs (`datasets/`, `models/`, `augmentation/`) are deleted.
+
+- **Repointed (5 unique `_target_`s, 39 refs across 14 configs):**
+  - `datasets.coca_t1c_combined_b2nd.COCACombinedB2NDDataModule` → `medsurvival3d.data.datamodules.COCACombinedB2NDDataModule`
+  - `datasets.survival.SurvivalDataModule` → `medsurvival3d.data.survival.SurvivalDataModule`
+  - `models.resenc.ResEncoder_Survival` → `medsurvival3d.models.backbones.resenc.ResEncoder_Survival`
+  - `augmentation.policies.batchgenerators.get_{training,test}_transforms` → `medsurvival3d.data.batchgenerators_transforms.get_{training,test}_transforms`
+- **Deleted (7 files):** `datasets/{__init__,survival,coca_t1c_combined_b2nd}.py`,
+  `models/{__init__,resenc}.py`, `augmentation/policies/{__init__,batchgenerators}.py`
+  (`git rm`-staged). Only consumers were the configs (zero live Python imports —
+  the `models.*` hits in `trainer.py` are dead comments). Stale `__pycache__`
+  orphans removed on both Mac and workstation.
+- **VERIFIED on workstation `aihub2.uniseg`:** (a) all 5 targets resolve via
+  Hydra `get_class`/`get_method` (what `instantiate` calls); (b) `fast_dev_run`
+  on `data=methylome_t1c_combined_high_vs_low` exits clean
+  (`Trainer.fit stopped: max_steps=1 reached`), exercising datamodule + both
+  transforms + resenc model through real `instantiate`. YAML all parses; no
+  dangling refs anywhere.
+- **NOT committed.** Working tree: 14 configs modified (unstaged), 7 shim files
+  `git rm`-staged, `HANDOFF.md` modified. Next: commit on `main`.
 
 ## 16-mixed single-loss sweep VERIFIED + pchazard dtype fix (2026-06-22, COMMITTED `79e02f4` on `main`)
 

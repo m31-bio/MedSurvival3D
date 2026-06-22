@@ -1,7 +1,7 @@
 # @package _global_
 data:
   module:
-    _target_: datasets.survival.SurvivalDataModule
+    _target_: medsurvival3d.data.survival.SurvivalDataModule
     name: Survival
     data_root_dir: ???
     batch_size: 2
@@ -9,7 +9,7 @@ data:
     image_dir: nnUNetResEncUNetLPlans_3d_fullres
     split_file: splits_final.json
     train_transforms:
-      _target_: augmentation.policies.batchgenerators.get_training_transforms
+      _target_: medsurvival3d.data.batchgenerators_transforms.get_training_transforms
       patch_size: ${data.patch_size}
       rotation_for_DA: 0.523599
       mirror_axes: [0,1,2]

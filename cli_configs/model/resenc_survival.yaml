@@ -1,6 +1,6 @@
 # @package _global_
 model:
-  _target_: models.resenc.ResEncoder_Survival
+  _target_: medsurvival3d.models.backbones.resenc.ResEncoder_Survival
   pretrained: True
   chpt_path: null
   num_classes: 1

@@ -1,18 +1,18 @@
 # @package _global_
 data:
   module:
-    _target_: datasets.coca_t1c_combined_b2nd.COCACombinedB2NDDataModule
+    _target_: medsurvival3d.data.datamodules.COCACombinedB2NDDataModule
     name: Methylome_T2w_High_v_Low_v2
     data_root_dir: /home/jma/Documents/projects/safwat/coca_classifier_codebase/dataset/nnssl_preprocessed/Dataset020_UHN_Mayo_T2w_mask
     batch_size: 12
     train_transforms:
-      _target_: augmentation.policies.batchgenerators.get_training_transforms
+      _target_: medsurvival3d.data.batchgenerators_transforms.get_training_transforms
       patch_size: ${data.patch_size}
       rotation_for_DA: 0.523599
       mirror_axes: [0,1,2]
       do_dummy_2d_data_aug: false
     test_transforms:
-      _target_: augmentation.policies.batchgenerators.get_test_transforms
+      _target_: medsurvival3d.data.batchgenerators_transforms.get_test_transforms
       patch_size: ${data.patch_size}
       do_dummy_2d_data_aug: false
     fold: 0
