@@ -106,3 +106,6 @@ datasets/imagenet_resize.py
 .hpo_agent/
 .pytest_cache/
 .remember/
+CLAUDE.md
+HANDOFF.md
+TODO.md
