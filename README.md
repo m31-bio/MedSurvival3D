@@ -97,24 +97,96 @@ For including your own dataset follow these steps:
    The `data.module._target_` defines the path to your `DataModule`. Note that the first line of the file needs to be `# @package _global_` in order for Hydra to read the config properly.
 
 
-# Training 
-### Primus-M
-Fine-tuning:
+# Running this fork (3D survival)
 
-`python main.py env=cluster model=primus data=Datasetname  trainer.devices=1 model.pretrained=True model.chpt_path=<path/to/checkpoint>`
+> This fork trains **discrete-time survival** models, not the upstream
+> classification task. The runnable surface is `main.py` (training) and
+> `medsurvival3d/inference/survival.py` (inference), both driven by Hydra configs
+> in `cli_configs/`. **Always run from the repository root** so that
+> `medsurvival3d`, `parsing_utils.py`, and `./cli_configs` resolve.
 
-Training from scratch:
+`main.py` (root config `cli_configs/train.yaml`) composes four config groups;
+override any value on the command line:
 
-`python main.py env=cluster model=primus data=Datasetname  trainer.devices=1 model.pretrained=False`
+| Group | Options | Default |
+|-------|---------|---------|
+| `env=` | `local`, `cluster` | `local` |
+| `model=` | `resenc_survival` | `resenc_survival` |
+| `data=` | `methylome_t1c_combined_{nll,cox,deephit,pmf,mtlr,bcesurv,weibull,pchazard,composite,soft_logrank}`, `methylome_t1c_combined_high_vs_low`, `methylome_t2w_combined_high_vs_low` | `…_soft_logrank` |
 
-### ResEnc-L
-Fine-tuning:
+The `data=` choice selects **both the dataset and the survival loss** (e.g.
+`…_nll` = NLL/logistic-hazard, `…_cox` = Cox, `…_deephit` = DeepHit, …).
 
-`python main.py env=cluster model=resenc data=Datasetname  trainer.devices=1 model.pretrained=True  model.chpt_path=<path/to/checkpoint>`
+## Train — fine-tune from an SSL checkpoint
 
-Training from scratch:
+The model config defaults to `pretrained: True`, so you **must** pass
+`model.chpt_path` or the run crashes in `torch.load(None)`:
 
-`python main.py env=cluster model=resenc data=Datasetname trainer.devices=1  model.pretrained=False`
+```shell
+WANDB_MODE=offline python main.py \
+  env=cluster \
+  data=methylome_t1c_combined_nll \
+  model.chpt_path=/path/to/S3D/checkpoint_final.pth \
+  exp_dir=/your/writable/output/dir
+```
+
+## Train — from scratch (no checkpoint)
+
+```shell
+WANDB_MODE=offline python main.py \
+  env=cluster \
+  data=methylome_t1c_combined_nll \
+  model.pretrained=False \
+  exp_dir=/your/writable/output/dir
+```
+
+## Quick smoke test (one train + val step)
+
+```shell
+WANDB_MODE=offline python main.py \
+  env=cluster \
+  data=methylome_t1c_combined_nll \
+  model.chpt_path=/path/to/S3D/checkpoint_final.pth \
+  exp_dir=/your/writable/output/dir \
+  data.cv.k=1 +trainer.fast_dev_run=true
+```
+
+### Overrides & gotchas (verified on the GPU workstation)
+
+- **`exp_dir=`** — the bundled `env=local` / `env=cluster` point at DKFZ paths;
+  override it with a writable directory (holds checkpoints + W&B logs). Dataset
+  paths are absolute *inside* each `data=` config, so no `data_dir` override is needed.
+- **`env=cluster`** already disables the progress bar, which is **required** over
+  non-interactive SSH (the rich progress bar otherwise crashes with
+  `IndexError: pop from empty list`). With `env=local`, add
+  `trainer.enable_progress_bar=false trainer.callbacks.progressbar=null`.
+- **Do not set `seed=`** — leave the default (`False`). A fixed seed enables
+  `deterministic=True`, which crashes the non-deterministic CUDA `avg_pool3d` backward.
+- **`WANDB_MODE=offline`** (or `trainer.logger.offline=true`) avoids a W&B login.
+- **Cross-validation:** `data.cv.k=<folds>` (the per-loss configs set `k=5`;
+  `train.yaml` defaults to 1 = no CV). `data.module.fold=<k>` picks the fold.
+- Mixed precision (`trainer.precision='16-mixed'`) is the default.
+
+## Inference / evaluation
+
+A second Hydra entry point, `medsurvival3d/inference/survival.py` (config
+`cli_configs/inference_survival.yaml`), loads the best checkpoint per fold from a
+finished run's `exp_dir`, runs val+test, ensembles folds, and writes `metrics.csv`
++ per-fold predictions. Required args: `exp_dir` (training output dir containing
+`config.yaml`), `splits_json`, `pred_dir`:
+
+```shell
+python -m medsurvival3d.inference.survival \
+  exp_dir=/your/training/run/dir \
+  splits_json=/path/to/splits_balanced_survival.json \
+  pred_dir=/your/predictions/out \
+  folds=[0,1,2,3,4]
+```
+
+> The training CLI above is verified end-to-end on the workstation. The inference
+> **CLI entry** has so far only been exercised at the function level by the test
+> suite — run it from the repo root, and if Hydra cannot locate the config, add
+> `--config-dir cli_configs`.
 
 
 
