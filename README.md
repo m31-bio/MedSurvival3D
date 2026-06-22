@@ -1,4 +1,4 @@
-# SSL3D Survival
+# MedSurvival3D
 
 This repository is a fork of the original 3D medical image classification codebase
 from the [Helmholtz Imaging image classification framework](https://github.com/MIC-DKFZ/image_classification).
