@@ -435,6 +435,14 @@ class BaseModel(L.LightningModule):
 
         if survival_curves:
             all_survival_curves = torch.cat(survival_curves)
+            # NOTE: time axes differ by design. Brier is fed `all_time_bins`
+            # (integer bin indices) because integrated_brier_score indexes the
+            # survival matrix by column == time value; AUC and C-index are fed
+            # `all_continuous_times` (years). So Brier/Brier-IPCW live on the
+            # bin-index axis while AUC@Ny lives on the year axis — the two are
+            # each internally valid but NOT on a comparable time grid (and
+            # Train/Brier is likewise not comparable to the year-based sksurv
+            # IBS reported by inference). Track them as separate signals.
             brier = integrated_brier_score(
                 all_survival_curves,
                 all_time_bins,

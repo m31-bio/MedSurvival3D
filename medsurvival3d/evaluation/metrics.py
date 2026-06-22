@@ -80,7 +80,14 @@ def _ibs_torchsurv(survival, event_times, event_observed, times, weight=None, we
 
 
 def integrated_brier_score(survival, event_times, event_observed):
-    """Unweighted integrated Brier score via torchsurv (weight=1 for all samples)."""
+    """Unweighted integrated Brier score via torchsurv (weight=1 for all samples).
+
+    Bin-index time axis: `event_times` must be discrete bin indices in the same
+    units as the survival-matrix columns (`_ibs_torchsurv` uses the time value as
+    both the eval grid and the column index `s[:, times]`), NOT continuous years.
+    Consequently this score is not on a comparable time grid with year-axis
+    metrics such as `time_dependent_auc`.
+    """
     survival = torch.as_tensor(survival).float()
     if survival.numel() == 0:
         return 0.0
@@ -99,6 +106,10 @@ def integrated_brier_score_ipcw(survival, event_times, event_observed, eps=1e-7)
     explicitly to BrierScore.  weight=None would give the unweighted (plain)
     score; we pass IPCW weights so this function is genuinely different from
     integrated_brier_score on censored data.
+
+    Bin-index time axis: like integrated_brier_score, `event_times` must be
+    discrete bin indices (same units as the survival-matrix columns), NOT
+    continuous years; not comparable to year-axis metrics like time_dependent_auc.
     """
     from torchsurv.stats.ipcw import get_ipcw
     survival = torch.as_tensor(survival).float()
