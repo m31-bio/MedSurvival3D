@@ -2,8 +2,8 @@
 data:
   module:
     _target_: medsurvival3d.data.datamodules.COCACombinedB2NDDataModule
-    name: Methylome_T2w_High_v_Low_v2
-    data_root_dir: /home/jma/Documents/projects/safwat/coca_classifier_codebase/dataset/nnssl_preprocessed/Dataset020_UHN_Mayo_T2w_mask
+    name: Survival_Alt_High_v_Low_v2
+    data_root_dir: ${data_dir}/survival_dataset
     batch_size: 12
     train_transforms:
       _target_: medsurvival3d.data.batchgenerators_transforms.get_training_transforms
@@ -16,14 +16,12 @@ data:
       patch_size: ${data.patch_size}
       do_dummy_2d_data_aug: false
     fold: 0
-    data_subdir: nnsslPlans_onemmiso/Dataset020_UHN_Mayo_T2w_mask/Dataset020_UHN_Mayo_T2w_mask
-    label_file: /home/jma/Documents/projects/safwat/coca_classifier_codebase/dataset/nnssl_preprocessed/Dataset020_UHN_Mayo_T2w_mask/survival_labels.json
-    split_file: /home/jma/Documents/projects/safwat/coca_classifier_codebase/dataset/nnssl_preprocessed/Dataset020_UHN_Mayo_T2w_mask/splits.json
+    data_subdir: images
+    label_file: ${data.module.data_root_dir}/survival_labels.json
+    split_file: ${data.module.data_root_dir}/splits.json
     image_suffix: .b2nd
-    mask_suffix: __anat.b2nd
     session_id: ses-DEFAULT
     target_shape: ${data.patch_size}
-    allow_missing_mask: false
   cv:
     k: 5
 
@@ -68,8 +66,8 @@ model:
 
 trainer:
   logger:
-    project: nnSSL_MethylomeRisk_Survival
-    name: T2w_Survival_lr5e6_resDo0.3_wd0.5
+    project: SSL3D_Survival
+    name: survival_binary_alt
   accumulate_grad_batches: 4
   max_epochs: 200
   sync_batchnorm: true

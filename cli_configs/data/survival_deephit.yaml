@@ -2,8 +2,8 @@
 data:
   module:
     _target_: medsurvival3d.data.datamodules.COCACombinedB2NDDataModule
-    name: Methylome_T1c_BCESurv
-    data_root_dir: /home/jma/Documents/projects/safwat/coca_classifier_codebase/dataset/nnssl_preprocessed/Dataset019_UHN_Mayo_T1c_mask
+    name: Survival_DeepHit
+    data_root_dir: ${data_dir}/survival_dataset
     batch_size: 24
     train_transforms:
       _target_: medsurvival3d.data.batchgenerators_transforms.get_training_transforms
@@ -19,14 +19,12 @@ data:
       patch_size: ${data.patch_size}
       do_dummy_2d_data_aug: false
     fold: 0
-    data_subdir: nnsslPlans_onemmiso/Dataset019_UHN_Mayo_T1c_mask/Dataset019_UHN_Mayo_T1c_mask
-    label_file: /home/jma/Documents/projects/safwat/coca_classifier_codebase/dataset/nnssl_preprocessed/Dataset019_UHN_Mayo_T1c_mask/survival_labels.json
-    split_file: /home/jma/Documents/projects/safwat/coca_classifier_codebase/dataset/nnssl_preprocessed/Dataset019_UHN_Mayo_T1c_mask/splits_balanced_survival.json
+    data_subdir: images
+    label_file: ${data.module.data_root_dir}/survival_labels.json
+    split_file: ${data.module.data_root_dir}/splits.json
     image_suffix: .b2nd
-    mask_suffix: __anat.b2nd
     session_id: ses-DEFAULT
     target_shape: ${data.patch_size}
-    allow_missing_mask: false
   cv:
     k: 5
   patch_size:
@@ -68,13 +66,18 @@ model:
   survival_landmark_years: ${fixed_survival_time_bins.cut_points_years}
   survival_smoothing_alpha: 0.05
   survival_loss:
-    name: bcesurv             # pycox BCE survival loss. No tunable hyperparameters.
+    name: deephit             # Single-event DeepHit (pycox).
+    alpha: 0.2                # HPARAM: [0.0, 1.0]. NLL<->ranking tradeoff:
+                              # total = alpha*NLL + (1-alpha)*ranking.
+                              # alpha=0 -> pure pairwise ranking; alpha=1 -> NLL only.
+    sigma: 0.1                # HPARAM (log): [0.01, 1.0]. Ranking kernel temperature;
+                              # smaller = sharper penalty on near-ties.
   save_preds: true
   result_plot: null
 trainer:
   logger:
-    project: nnSSL_MethylomeRisk_Survival
-    name: t1c_bcesurv
+    project: SSL3D_Survival
+    name: survival_deephit
   accumulate_grad_batches: 2
   max_epochs: 200
   sync_batchnorm: true

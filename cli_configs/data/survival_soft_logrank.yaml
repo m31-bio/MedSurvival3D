@@ -1,6 +1,6 @@
 # @package _global_
 # ---------------------------------------------------------------------------
-# SSL3D survival -- soft-LogRank stratification on T1c+mask (Dataset019).
+# SSL3D survival -- soft-LogRank stratification on survival data (survival dataset).
 #
 # HPO objective: maximize Val/logrank_chi2 (Mantel-Cox chi^2 on validation
 # fold, p_high >= 0.5 cutoff). Logged once per epoch from
@@ -8,14 +8,14 @@
 # between predicted high/low risk groups.
 #
 # Locked by orchestrator (forced_overrides):
-#   data=methylome_t1c_combined_soft_logrank, data.module.fold=0,
+#   data=survival_soft_logrank, data.module.fold=0,
 #   data.cv.k=1, model=resenc_survival, trainer.enable_checkpointing=False.
 # ---------------------------------------------------------------------------
 data:
   module:
     _target_: medsurvival3d.data.datamodules.COCACombinedB2NDDataModule
-    name: Methylome_T1c_SoftLogRank
-    data_root_dir: /home/jma/Documents/projects/safwat/coca_classifier_codebase/dataset/nnssl_preprocessed/Dataset019_UHN_Mayo_T1c_mask
+    name: Survival_SoftLogRank
+    data_root_dir: ${data_dir}/survival_dataset
     batch_size: 24            # HPARAM: choices [8, 16, 24, 32]. Larger -> stabler logrank gradients but more VRAM.
     train_transforms:
       _target_: medsurvival3d.data.batchgenerators_transforms.get_training_transforms
@@ -28,14 +28,12 @@ data:
       patch_size: ${data.patch_size}
       do_dummy_2d_data_aug: false
     fold: 0                   # LOCKED via forced_overrides (HPO uses only fold 0).
-    data_subdir: nnsslPlans_onemmiso/Dataset019_UHN_Mayo_T1c_mask/Dataset019_UHN_Mayo_T1c_mask
-    label_file: /home/jma/Documents/projects/safwat/coca_classifier_codebase/dataset/nnssl_preprocessed/Dataset019_UHN_Mayo_T1c_mask/survival_labels.json
-    split_file: /home/jma/Documents/projects/safwat/coca_classifier_codebase/dataset/nnssl_preprocessed/Dataset019_UHN_Mayo_T1c_mask/splits.json
+    data_subdir: images
+    label_file: ${data.module.data_root_dir}/survival_labels.json
+    split_file: ${data.module.data_root_dir}/splits.json
     image_suffix: .b2nd
-    mask_suffix: __anat.b2nd
     session_id: ses-DEFAULT
     target_shape: ${data.patch_size}
-    allow_missing_mask: false
   cv:
     k: 1                      # LOCKED to 1 by forced_overrides: keeps main.py's fold loop to a single pass on fold 0.
   patch_size: [64, 64, 64]    # Fixed by the preprocessed dataset; not a tunable.
@@ -45,7 +43,7 @@ fixed_survival_time_bins:
   num_time_bins: 5
 model:
   cifar_size: false
-  input_channels: 2           # T1c + brain mask. Tied to data layout.
+  input_channels: 2           # Number of input image channels.
   input_dim: 3
   input_shape: ${data.patch_size}
   # --- Optimization knobs (primary HPO surface) ---
@@ -85,8 +83,8 @@ model:
   # survival_stratification_quantile_range: [0.2, 0.8]
 trainer:
   logger:
-    project: nnSSL_MethylomeRisk_Survival
-    name: t1c_mask_soft_logrank
+    project: SSL3D_Survival
+    name: survival_soft_logrank
   accumulate_grad_batches: 2  # HPARAM: choices [1, 2, 4, 8]. Effective batch = batch_size * accumulate. Larger helps logrank curvature estimate.
   max_epochs: 200             # Hard cap; real stop usually driven by early_stopping below.
   sync_batchnorm: true

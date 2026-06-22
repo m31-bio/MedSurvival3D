@@ -2,7 +2,7 @@ defaults:
   - _self_
   - env: local
   - model: resenc_survival
-  - data: methylome_t1c_combined_soft_logrank
+  - data: survival_soft_logrank
 
 teamname: 'debug'
 output_subdir: ${exp_dir}/${teamname}/survival/${data.module.name}/checkpoints/${make_group_name:}

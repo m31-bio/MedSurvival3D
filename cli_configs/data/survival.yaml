@@ -3,11 +3,11 @@ data:
   module:
     _target_: medsurvival3d.data.survival.SurvivalDataModule
     name: Survival
-    data_root_dir: ???
+    data_root_dir: ${data_dir}/survival_dataset
     batch_size: 2
-    label_file: survival_labels.json
+    label_file: ${data.module.data_root_dir}/survival_labels.json
     image_dir: nnUNetResEncUNetLPlans_3d_fullres
-    split_file: splits_final.json
+    split_file: ${data.module.data_root_dir}/splits.json
     train_transforms:
       _target_: medsurvival3d.data.batchgenerators_transforms.get_training_transforms
       patch_size: ${data.patch_size}
