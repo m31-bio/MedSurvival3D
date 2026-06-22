@@ -174,6 +174,7 @@ class PCHazardLoss(nn.Module):
         self._loss = NLLPCHazardLoss()
 
     def forward(self, logits, time, event, interval_frac):
+        logits = logits.float()  # pycox log_softplus index_put needs fp32 dest (16-mixed AMP)
         return self._loss(logits, time.to(torch.int64).view(-1),
                           event.to(torch.float32).view(-1),
                           interval_frac.to(logits.dtype).view(-1))

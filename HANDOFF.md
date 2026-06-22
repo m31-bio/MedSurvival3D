@@ -3,7 +3,28 @@
 Session handoff for the next Claude working in `SSL3D_survival`. Read this
 before starting. Last updated: 2026-06-18.
 
-## Composite loss VERIFIED on cluster + 16-mixed fix (2026-06-18, UNCOMMITTED on `main`)
+## 16-mixed single-loss sweep VERIFIED + pchazard dtype fix (2026-06-22, COMMITTED `79e02f4` on `main`)
+
+Swept all 9 single-loss configs at default `precision: 16-mixed` via `fast_dev_run`
+on workstation (real S3D SSL ckpt). Result: **8/9 PASS**
+(`nll cox deephit pmf mtlr bcesurv weibull soft_logrank`), **`pchazard` FAILED** —
+same dtype class as the committed nll/deephit fix, missed by the prior session's
+"type promotion covers it" assumption.
+
+- **Bug:** pycox `log_softplus` (`utils.py:54`) does `output[above] = F.softplus(input[above]).log()`.
+  Under CUDA autocast, `softplus` upcasts to fp32 while `output` (cloned from fp16
+  logits) stays fp16 → `Index put requires source and destination dtypes match`.
+- **Fix:** `logits = logits.float()` in `PCHazardLoss.forward` (`losses.py:177`),
+  identical to DeepHit (`losses.py:126`). Surgical, one line.
+- **TDD:** added `test_pchazard_under_cuda_autocast_fp16` to `tests/test_loss_amp_dtype.py`
+  (CUDA-gated — the pre-existing CPU AMP test is a false negative: no autocast → no
+  upcast → no crash). Verified RED (exact `index_put` error) → fix → GREEN.
+- **Verified GREEN on workstation:** 7/7 in `test_loss_amp_dtype.py` + production
+  `fast_dev_run data=methylome_t1c_combined_pchazard` exits 0. Suite now 9/9 at 16-mixed.
+- **COMMITTED `79e02f4`:** `medsurvival3d/models/losses.py` + `tests/test_loss_amp_dtype.py`
+  changed on Mac, rsync'd + verified on workstation, then committed to `main`.
+
+## Composite loss VERIFIED on cluster + 16-mixed fix (2026-06-18, COMMITTED `6fb931b` on `main`)
 
 Verified the composite survival loss end-to-end on the workstation (real S3D SSL
 ckpt, 1 epoch, 3 train/3 val batches, CSVLogger capture). Two bugs found & fixed:
@@ -18,7 +39,9 @@ ckpt, 1 epoch, 3 train/3 val batches, CSVLogger capture). Two bugs found & fixed
    not composite's fault; never caught because the default smoke config is
    `soft_logrank` (no pycox). Confirmed: single `nll` @16-mixed crashes identically.
    Fixed via `logits.float()` / `pmf_logits.float()` in those two `forward`s.
-   NOTE pmf/mtlr/bcesurv/pchazard do NOT crash (type promotion) — left untouched.
+   NOTE pmf/mtlr/bcesurv do NOT crash (type promotion) — left untouched.
+   CORRECTION (2026-06-22): `pchazard` DOES crash too — see top section. The
+   earlier "type promotion covers pchazard" assumption was wrong; verified by sweep.
 
 **Evidence:** `Train/loss == 1.0·NLL + 0.3·Cox` to float precision (~2e-7) in
 train & val; `CompositeLoss == loss`; metrics driven by `nll` primary. Composite

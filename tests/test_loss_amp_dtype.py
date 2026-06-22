@@ -63,3 +63,35 @@ def test_pycox_loss_accepts_float16_logits(name):
         name, criterion, y_hat, time_bin, event, continuous_time, bin_edges,
     )
     assert torch.isfinite(loss), (name, loss)
+
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available(),
+    reason="pchazard fp16 index_put bug only reproduces under CUDA autocast",
+)
+def test_pchazard_under_cuda_autocast_fp16():
+    """pchazard crashes under CUDA autocast even though the CPU test above passes.
+
+    pycox's ``log_softplus`` does an in-place index_put
+    (``output[above] = F.softplus(input[above]).log()``). Under CUDA autocast,
+    ``softplus`` upcasts to float32 while ``output = zeros_like(phi)`` stays
+    float16, raising ``Index put requires the source and destination dtypes
+    match``. The CPU parametrized test cannot catch this (no autocast upcast on
+    CPU). Surfaced 2026-06-22 via the 16-mixed single-loss sweep, after a prior
+    note wrongly assumed type promotion covered pchazard.
+    """
+    num_bins, batch = 5, 8
+    dev = torch.device("cuda")
+    _, criterion = build_survival_criterion({"name": "pchazard"}, num_time_bins=num_bins)
+
+    y_hat = {k: v.to(dev) for k, v in _half_y_hat(batch, num_bins).items()}
+    time_bin = torch.tensor([0, 1, 2, 3, 4, 0, 2, 4], dtype=torch.long, device=dev)
+    event = torch.tensor([1, 0, 1, 1, 0, 1, 0, 1], dtype=torch.float32, device=dev)
+    continuous_time = time_bin.float() + 0.5
+    bin_edges = torch.tensor([0.0, 1.0, 2.0, 3.0, 5.0], device=dev)
+
+    with torch.autocast("cuda", dtype=torch.float16):
+        loss, _ = call_one_loss(
+            "pchazard", criterion, y_hat, time_bin, event, continuous_time, bin_edges,
+        )
+    assert torch.isfinite(loss), loss
