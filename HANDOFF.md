@@ -3,7 +3,27 @@
 Session handoff for the next Claude working in `SSL3D_survival`. Read this
 before starting. Last updated: 2026-06-22.
 
-## Phase 2 — Hydra `_target_` repoint + shim removal COMPLETE (2026-06-22, VERIFIED on workstation, NOT yet committed)
+## Brier/AUC time-axis documented (2026-06-22, COMMITTED `05e47fb` on `main`) — TODO.md #1 RESOLVED
+
+Closed `TODO.md` #1 by **documentation, not code change** (user chose "document
+only" after root-cause investigation). Root cause: `integrated_brier_score` /
+`_ibs_torchsurv` use the time value as BOTH the torchsurv eval `new_time` AND the
+survival-matrix column index (`s[:, times]`), which forces the caller to pass
+**bin indices** — so Brier lives on the bin-index axis, while `time_dependent_auc`
+(bucketizes year→column), C-index, and inference's sksurv IBS all live on the
+**year** axis. Each is internally valid; they are NOT on a comparable time grid.
+
+- **Change (doc only, no behavioral change):** comment at the
+  `_log_survival_metrics` Brier/AUC call site (`trainer.py`) + axis-contract notes
+  in `integrated_brier_score` / `integrated_brier_score_ipcw` docstrings (`metrics.py`).
+- **Verified:** `py_compile` clean; `git diff` = exactly the 3 comment blocks.
+- **NOT done (the rejected Option B):** unifying Brier onto the year axis (rewrite
+  `_ibs_torchsurv`/`_valid_time_grid` to bucketize eval-years→columns like AUC).
+  Would make Brier comparable to AUC + inference IBS but changes all logged Brier
+  values and touches inference-shared code + `test_train_brier.py` /
+  `test_inference_auc_ibs.py`. Revisit only if cross-metric comparability is wanted.
+
+## Phase 2 — Hydra `_target_` repoint + shim removal COMPLETE (2026-06-22, COMMITTED `755d7db` on `main`)
 
 The 4 legacy `_target_` shims kept after Phase 1 are now retired. All 14 Hydra
 configs point directly at `medsurvival3d`; the shim files and their empty legacy
@@ -25,10 +45,10 @@ package dirs (`datasets/`, `models/`, `augmentation/`) are deleted.
   (`Trainer.fit stopped: max_steps=1 reached`), exercising datamodule + both
   transforms + resenc model through real `instantiate`. YAML all parses; no
   dangling refs anywhere.
-- **NOT committed.** Working tree: 14 configs modified (unstaged), 7 shim files
-  `git rm`-staged, `HANDOFF.md` modified. Next: commit on `main`.
+- **COMMITTED `755d7db`** (14 configs repointed + 7 shim files removed). Working
+  tree clean afterward.
 
-## 16-mixed single-loss sweep VERIFIED + pchazard dtype fix (2026-06-22, COMMITTED `79e02f4` on `main`)
+## 16-mixed single-loss sweep VERIFIED + pchazard dtype fix (2026-06-22, COMMITTED `fe67de0` on `main`)
 
 Swept all 9 single-loss configs at default `precision: 16-mixed` via `fast_dev_run`
 on workstation (real S3D SSL ckpt). Result: **8/9 PASS**
@@ -46,7 +66,7 @@ same dtype class as the committed nll/deephit fix, missed by the prior session's
   upcast → no crash). Verified RED (exact `index_put` error) → fix → GREEN.
 - **Verified GREEN on workstation:** 7/7 in `test_loss_amp_dtype.py` + production
   `fast_dev_run data=methylome_t1c_combined_pchazard` exits 0. Suite now 9/9 at 16-mixed.
-- **COMMITTED `79e02f4`:** `medsurvival3d/models/losses.py` + `tests/test_loss_amp_dtype.py`
+- **COMMITTED `fe67de0`:** `medsurvival3d/models/losses.py` + `tests/test_loss_amp_dtype.py`
   changed on Mac, rsync'd + verified on workstation, then committed to `main`.
 
 ## Composite loss VERIFIED on cluster + 16-mixed fix (2026-06-18, COMMITTED `6fb931b` on `main`)
