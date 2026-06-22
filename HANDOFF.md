@@ -1,7 +1,38 @@
 # HANDOFF
 
 Session handoff for the next Claude working in `SSL3D_survival`. Read this
-before starting. Last updated: 2026-06-17.
+before starting. Last updated: 2026-06-18.
+
+## Composite loss VERIFIED on cluster + 16-mixed fix (2026-06-18, UNCOMMITTED on `main`)
+
+Verified the composite survival loss end-to-end on the workstation (real S3D SSL
+ckpt, 1 epoch, 3 train/3 val batches, CSVLogger capture). Two bugs found & fixed:
+
+1. **Composite head wiring** (`medsurvival3d/models/backbones/resenc.py:82`):
+   passed raw `self.survival_loss_name` (`"composite"`) to `SurvivalHead`, whose
+   `_VALID_LOSSES` guard rejected it → crash at model build. Fixed → pass
+   `self.survival_primary_name` (resolved primary, e.g. `nll`). Composite-specific.
+2. **`16-mixed` dtype crash in pycox losses** (`medsurvival3d/models/losses.py`):
+   under autocast, float16 logits + float32 events crashed pycox in
+   `NLLSurvLoss` (scatter) and `DeepHitLoss` (rank matmul). **Pre-existing** —
+   not composite's fault; never caught because the default smoke config is
+   `soft_logrank` (no pycox). Confirmed: single `nll` @16-mixed crashes identically.
+   Fixed via `logits.float()` / `pmf_logits.float()` in those two `forward`s.
+   NOTE pmf/mtlr/bcesurv/pchazard do NOT crash (type promotion) — left untouched.
+
+**Evidence:** `Train/loss == 1.0·NLL + 0.3·Cox` to float precision (~2e-7) in
+train & val; `CompositeLoss == loss`; metrics driven by `nll` primary. Composite
+now trains at production `precision: 16-mixed`, `fit` exit 0.
+
+**New test:** `tests/test_loss_amp_dtype.py` — 6 pycox losses accept float16
+logits (RED on nll+deephit before fix, all GREEN after). Loss suite: 44 pass,
+only pre-existing failure is `test_pchazard_surv_oracle_pycox` (CUDA `.numpy()`
+without `.cpu()` — test-side bug, one of the known 14, unrelated to this work).
+
+**Parked / next:** (a) commit these 3 files to `main`; (b) the 16-mixed fix
+unblocks ALL pycox single-loss configs at default precision — worth a sanity run;
+(c) `+trainer.csv_logger_dir` is incompatible with `cv.k>1` (logger popped inside
+fold loop → `main.py:64` crash on fold 1); debug-only flag, low priority.
 
 ## Phase 1 package restructure — COMPLETE (2026-06-15, all on `main`)
 

@@ -79,7 +79,7 @@ class ResEncoder_Survival(BaseModel):
             hidden_dim=hypparams["survival_head_hidden_dim"],
             dropout=hypparams.get("survival_head_dropout", 0.0),
             norm=hypparams.get("survival_head_norm", "batchnorm"),
-            survival_loss_name=self.survival_loss_name,
+            survival_loss_name=self.survival_primary_name,
         )
 
     def forward(self, x):

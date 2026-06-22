@@ -85,6 +85,7 @@ class NLLSurvLoss(nn.Module):
         self._loss = NLLLogistiHazardLoss(reduction=reduction)
 
     def forward(self, logits, time, event):
+        logits = logits.float()  # pycox scatter requires logits/events same dtype (16-mixed AMP)
         idx = time.to(torch.int64).view(-1)
         ev = event.to(torch.float32).view(-1)
         return self._loss(logits, idx, ev)
@@ -122,6 +123,7 @@ class DeepHitLoss(nn.Module):
 
     def forward(self, pmf_logits, time, event):
         from pycox.models.data import pair_rank_mat
+        pmf_logits = pmf_logits.float()  # pycox DeepHit rank matmul requires fp32 (16-mixed AMP)
         idx = time.to(torch.int64).view(-1)
         ev = event.to(torch.int64).view(-1)
         rank_mat = torch.as_tensor(
